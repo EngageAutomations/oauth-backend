@@ -6,7 +6,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'OAuth Callback Proxy' });
 });
 
-app.get('/api/oauth/callback', async (req, res) => {
+app.get('/api/oauth/callback', (req, res) => {
   console.log('=== OAUTH CALLBACK RECEIVED ===');
   console.log('Query params:', req.query);
 
@@ -17,6 +17,6 @@ app.get('/api/oauth/callback', async (req, res) => {
   res.redirect(replitOAuthUrl);
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ OAuth Proxy listening on port ${PORT}`);
 });
