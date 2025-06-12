@@ -20,6 +20,18 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'GHL OAuth Backend', timestamp: new Date().toISOString() });
 });
 
+// Environment check endpoint (for debugging)
+app.get('/api/env-check', (req, res) => {
+  res.json({
+    hasClientId: !!process.env.GHL_CLIENT_ID,
+    hasClientSecret: !!process.env.GHL_CLIENT_SECRET,
+    hasRedirectUri: !!process.env.GHL_REDIRECT_URI,
+    clientIdValue: process.env.GHL_CLIENT_ID || 'DEFAULT_USED',
+    redirectUriValue: process.env.GHL_REDIRECT_URI || 'DEFAULT_USED',
+    nodeEnv: process.env.NODE_ENV || 'not_set'
+  });
+});
+
 // OAuth URL generation endpoint
 app.get('/api/oauth/url', (req, res) => {
   console.log('=== GENERATING OAUTH URL ===');
@@ -86,7 +98,15 @@ app.get('/api/oauth/callback', async (req, res) => {
       redirect_uri: tokenRequest.redirect_uri
     });
 
-    const response = await axios.post('https://services.leadconnectorhq.com/oauth/token', tokenRequest, {
+    // Convert to URL-encoded format for GoHighLevel API
+    const formData = new URLSearchParams();
+    formData.append('grant_type', tokenRequest.grant_type);
+    formData.append('client_id', tokenRequest.client_id);
+    formData.append('client_secret', tokenRequest.client_secret);
+    formData.append('code', tokenRequest.code);
+    formData.append('redirect_uri', tokenRequest.redirect_uri);
+
+    const response = await axios.post('https://services.leadconnectorhq.com/oauth/token', formData.toString(), {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Accept': 'application/json'
