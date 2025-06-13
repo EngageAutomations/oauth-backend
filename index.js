@@ -269,6 +269,125 @@ app.get('/api/oauth/callback', async (req, res) => {
   }
 });
 
+// OAuth success page
+app.get('/oauth-success', (req, res) => {
+  const { success, timestamp, locationId, companyId, state } = req.query;
+  
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>OAuth Success - GoHighLevel Connected</title>
+      <style>
+        body { 
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+          margin: 0; padding: 0;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          min-height: 100vh; display: flex; align-items: center; justify-content: center;
+        }
+        .container { 
+          max-width: 500px; background: white; padding: 60px 40px;
+          border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+          text-align: center;
+        }
+        h1 { color: #38a169; margin-bottom: 20px; font-size: 28px; }
+        .success-icon { font-size: 48px; margin-bottom: 20px; }
+        .details { 
+          background: #f7fafc; padding: 20px; border-radius: 12px; 
+          margin: 20px 0; text-align: left; font-size: 14px;
+        }
+        .btn { 
+          background: #667eea; color: white; padding: 16px 32px; 
+          border: none; border-radius: 12px; text-decoration: none; 
+          display: inline-block; margin: 20px 0; cursor: pointer;
+        }
+        .btn:hover { background: #5a67d8; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="success-icon">✅</div>
+        <h1>Successfully Connected!</h1>
+        <p>Your GoHighLevel account has been connected to the Directory App.</p>
+        
+        <div class="details">
+          <strong>Connection Details:</strong><br>
+          Timestamp: ${new Date(parseInt(timestamp || Date.now())).toLocaleString()}<br>
+          ${locationId ? `Location ID: ${locationId}<br>` : ''}
+          ${companyId ? `Company ID: ${companyId}<br>` : ''}
+          Status: Active
+        </div>
+        
+        <p>You can now create and manage product directories through your GoHighLevel account.</p>
+        
+        <a href="/" class="btn">Return to Dashboard</a>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+// OAuth error page
+app.get('/oauth-error', (req, res) => {
+  const { error, details } = req.query;
+  
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>OAuth Error - Connection Failed</title>
+      <style>
+        body { 
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+          margin: 0; padding: 0;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          min-height: 100vh; display: flex; align-items: center; justify-content: center;
+        }
+        .container { 
+          max-width: 500px; background: white; padding: 60px 40px;
+          border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+          text-align: center;
+        }
+        h1 { color: #e53e3e; margin-bottom: 20px; font-size: 28px; }
+        .error-icon { font-size: 48px; margin-bottom: 20px; }
+        .details { 
+          background: #fed7d7; padding: 20px; border-radius: 12px; 
+          margin: 20px 0; text-align: left; font-size: 14px; color: #c53030;
+        }
+        .btn { 
+          background: #667eea; color: white; padding: 16px 32px; 
+          border: none; border-radius: 12px; text-decoration: none; 
+          display: inline-block; margin: 20px 0; cursor: pointer;
+        }
+        .btn:hover { background: #5a67d8; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="error-icon">❌</div>
+        <h1>Connection Failed</h1>
+        <p>There was an issue connecting your GoHighLevel account.</p>
+        
+        <div class="details">
+          <strong>Error Details:</strong><br>
+          ${error ? `Error: ${decodeURIComponent(error)}<br>` : ''}
+          ${details ? `Details: ${decodeURIComponent(details)}<br>` : ''}
+          Time: ${new Date().toLocaleString()}
+        </div>
+        
+        <p>Please try connecting again or contact support if the issue persists.</p>
+        
+        <a href="/" class="btn">Try Again</a>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
 // Debug endpoint - Get all OAuth installations
 app.get('/api/debug/installations', async (req, res) => {
   try {
