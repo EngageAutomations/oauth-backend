@@ -3,13 +3,10 @@ const express = require('express');
 const axios = require('axios');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
-
 const app = express();
 const PORT = process.env.PORT || 5000;
-
 // In-memory storage for OAuth installations
 let oauthInstallations = [];
-
 const storage = {
   createInstallation(installationData) {
     const installation = {
@@ -22,18 +19,18 @@ const storage = {
     oauthInstallations.push(installation);
     return installation;
   },
-
   getAllInstallations() {
     return oauthInstallations.sort((a, b) => new Date(b.installationDate) - new Date(a.installationDate));
   },
-
   getInstallationByUserId(ghlUserId) {
     return oauthInstallations
       .filter(install => install.ghlUserId === ghlUserId)
       .sort((a, b) => new Date(b.installationDate) - new Date(a.installationDate))[0];
+  },
+  getInstallationById(id) {
+    return oauthInstallations.find(install => install.id == id);
   }
 };
-
 // Comprehensive GoHighLevel API endpoint configurations
 const GHL_API_ENDPOINTS = [
   // Products API
@@ -97,38 +94,36 @@ const GHL_API_ENDPOINTS = [
   { path: '/user/info', method: 'GET', ghlEndpoint: '/oauth/userinfo', requiresLocationId: false, scope: 'oauth' },
   { path: '/user/me', method: 'GET', ghlEndpoint: '/users/me', requiresLocationId: false, scope: 'users.readonly' }
 ];
-
 // Universal API Handler Class
 class UniversalAPIHandler {
   static findEndpointConfig(method, path) {
     return GHL_API_ENDPOINTS.find(endpoint => {
       if (endpoint.method !== method) return false;
       
-      const pattern = endpoint.path
-        .replace(/:[^\/]+/g, '[^/]+')
+      const endpointPathRegex = endpoint.path
+        .replace(/:\w+/g, '([^/]+)')
         .replace(/\//g, '\\/');
       
-      const regex = new RegExp(`^${pattern}$`);
+      const regex = new RegExp(`^${endpointPathRegex}$`);
       return regex.test(path);
     });
   }
-
   static extractPathParams(pattern, actualPath) {
-    const params = {};
-    const patternParts = pattern.split('/');
-    const actualParts = actualPath.split('/');
+    const paramNames = pattern.match(/:\w+/g) || [];
+    const values = actualPath.match(new RegExp(
+      pattern.replace(/:\w+/g, '([^/]+)').replace(/\//g, '\\/')
+    ));
     
-    for (let i = 0; i < patternParts.length; i++) {
-      const patternPart = patternParts[i];
-      if (patternPart.startsWith(':')) {
-        const paramName = patternPart.substring(1);
-        params[paramName] = actualParts[i];
-      }
+    const params = {};
+    if (values) {
+      paramNames.forEach((param, index) => {
+        const paramName = param.substring(1);
+        params[paramName] = values[index + 1];
+      });
     }
     
     return params;
   }
-
   static buildGHLEndpoint(config, pathParams, locationId) {
     let endpoint = config.ghlEndpoint;
     
@@ -142,63 +137,47 @@ class UniversalAPIHandler {
     
     return endpoint;
   }
-
   static async getInstallation(installationId) {
+    if (installationId) {
+      return storage.getInstallationById(installationId);
+    }
+    
     const installations = storage.getAllInstallations();
-    
-    if (installations.length === 0) {
-      throw new Error('No OAuth installations found');
-    }
-    
-    const installation = installationId 
-      ? installations.find(i => i.id.toString() === installationId)
-      : installations[0];
-    
-    if (!installation) {
-      throw new Error('Installation not found');
-    }
-    
-    if (!installation.ghlAccessToken) {
-      throw new Error('No access token available');
-    }
-    
-    return installation;
+    return installations.length > 0 ? installations[0] : null;
   }
-
   static async makeGHLRequest(config, pathParams, queryParams, body, headers, installation, locationId) {
-    const ghlEndpoint = this.buildGHLEndpoint(config, pathParams, locationId || installation.ghlLocationId);
-    
-    const requestConfig = {
-      method: config.method,
-      url: `https://services.leadconnectorhq.com${ghlEndpoint}`,
-      headers: {
-        'Authorization': `Bearer ${installation.ghlAccessToken}`,
-        'Content-Type': 'application/json',
-        'Version': '2021-07-28',
-        ...headers
-      },
-      timeout: 15000
-    };
-
-    if (body && ['POST', 'PUT', 'PATCH'].includes(config.method)) {
-      requestConfig.data = body;
-    }
-
-    if (queryParams && Object.keys(queryParams).length > 0) {
-      requestConfig.params = queryParams;
-    }
-
-    console.log(`[GHL API] ${config.method} ${ghlEndpoint}`);
-    
     try {
+      const ghlEndpoint = this.buildGHLEndpoint(config, pathParams, locationId || installation.ghlLocationId);
+      const url = `https://services.leadconnectorhq.com${ghlEndpoint}`;
+      
+      const requestHeaders = {
+        'Authorization': `Bearer ${installation.ghlAccessToken}`,
+        'Version': '2021-07-28',
+        'Content-Type': 'application/json',
+        ...headers
+      };
+      let requestConfig = {
+        method: config.method,
+        url: url,
+        headers: requestHeaders,
+        timeout: 30000
+      };
+      if (Object.keys(queryParams).length > 0) {
+        requestConfig.params = queryParams;
+      }
+      if (body && (config.method === 'POST' || config.method === 'PUT' || config.method === 'PATCH')) {
+        requestConfig.data = body;
+      }
+      console.log(`[GHL API Request] ${config.method} ${url}`);
       const response = await axios(requestConfig);
       return {
         success: true,
+        status: response.status,
         data: response.data,
-        status: response.status
+        headers: response.headers
       };
     } catch (error) {
-      console.error(`[GHL API Error] ${config.method} ${ghlEndpoint}:`, error.message);
+      console.error(`[GHL API Error] ${config.method} ${config.ghlEndpoint}:`, error.message);
       return {
         success: false,
         error: error.response?.data?.error || error.message,
@@ -207,7 +186,6 @@ class UniversalAPIHandler {
       };
     }
   }
-
   static async handleUniversalRequest(req, res) {
     try {
       const method = req.method;
@@ -268,7 +246,6 @@ class UniversalAPIHandler {
     }
   }
 }
-
 // Middleware
 app.use(express.json());
 app.use(cookieParser());
@@ -276,7 +253,6 @@ app.use(cors({
   origin: ['https://listings.engageautomations.com', 'https://dir.engageautomations.com', 'http://localhost:3000'],
   credentials: true
 }));
-
 function requireOAuth(req, res, next) {
   const installations = storage.getAllInstallations();
   
@@ -290,7 +266,6 @@ function requireOAuth(req, res, next) {
   
   next();
 }
-
 // Health check
 app.get('/health', (req, res) => {
   res.json({ 
@@ -301,11 +276,10 @@ app.get('/health', (req, res) => {
     supportedEndpoints: GHL_API_ENDPOINTS.length
   });
 });
-
 // OAuth endpoints
 app.get('/api/oauth/url', (req, res) => {
-  const clientId = process.env.GHL_CLIENT_ID || '68474924a586bce22a6e64f7-mbpkmyu4';
-  const redirectUri = process.env.GHL_REDIRECT_URI || 'https://listings.engageautomations.com/api/oauth/callback';
+  const clientId = process.env.GHL_CLIENT_ID;
+  const redirectUri = process.env.GHL_REDIRECT_URI;
   const scopes = 'locations.readonly locations.write contacts.readonly contacts.write opportunities.readonly opportunities.write calendars.readonly calendars.write forms.readonly forms.write surveys.readonly surveys.write workflows.readonly workflows.write snapshots.readonly snapshots.write products/prices.write products/prices.readonly products/collection.write products/collection.readonly medias.write medias.readonly';
   
   const state = `oauth_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -318,29 +292,24 @@ app.get('/api/oauth/url', (req, res) => {
     timestamp: Date.now()
   });
 });
-
 app.get('/api/oauth/callback', async (req, res) => {
   const { code, state, error } = req.query;
-
   if (error) {
     const errorUrl = `https://listings.engageautomations.com/oauth-error?error=${encodeURIComponent(error)}`;
     return res.redirect(errorUrl);
   }
-
   if (!code) {
     const errorUrl = `https://listings.engageautomations.com/oauth-error?error=${encodeURIComponent('Missing authorization code')}`;
     return res.redirect(errorUrl);
   }
-
   try {
     const tokenRequestData = new URLSearchParams({
       grant_type: 'authorization_code',
-      client_id: process.env.GHL_CLIENT_ID || '68474924a586bce22a6e64f7-mbpkmyu4',
+      client_id: process.env.GHL_CLIENT_ID,
       client_secret: process.env.GHL_CLIENT_SECRET,
       code: String(code),
-      redirect_uri: process.env.GHL_REDIRECT_URI || 'https://listings.engageautomations.com/api/oauth/callback'
+      redirect_uri: process.env.GHL_REDIRECT_URI
     });
-
     const response = await axios.post('https://services.leadconnectorhq.com/oauth/token', 
       tokenRequestData.toString(),
       {
@@ -351,7 +320,6 @@ app.get('/api/oauth/callback', async (req, res) => {
         timeout: 10000
       }
     );
-
     // Get user info
     let userInfo = null;
     try {
@@ -365,7 +333,6 @@ app.get('/api/oauth/callback', async (req, res) => {
     } catch (userError) {
       console.warn('Failed to get user info:', userError.message);
     }
-
     const installationData = {
       ghlUserId: userInfo?.userId || `user_${Date.now()}`,
       ghlLocationId: userInfo?.locationId,
@@ -377,27 +344,22 @@ app.get('/api/oauth/callback', async (req, res) => {
       ghlScopes: response.data.scope,
       isActive: true
     };
-
     const savedInstallation = storage.createInstallation(installationData);
     console.log('✅ OAuth installation saved with ID:', savedInstallation.id);
-
     const params = new URLSearchParams({
       success: 'true',
       timestamp: Date.now().toString(),
       locationId: userInfo?.locationId || 'unknown',
       installationId: savedInstallation.id.toString()
     });
-
     const successUrl = `https://listings.engageautomations.com/oauth-success?${params.toString()}`;
     return res.redirect(successUrl);
-
   } catch (error) {
     console.error('Token exchange failed:', error.message);
     const errorUrl = `https://listings.engageautomations.com/oauth-error?error=${encodeURIComponent(error.message)}`;
     return res.redirect(errorUrl);
   }
 });
-
 // Debug endpoints
 app.get('/api/debug/installations', (req, res) => {
   const installations = storage.getAllInstallations();
@@ -408,36 +370,197 @@ app.get('/api/debug/installations', (req, res) => {
       id: install.id,
       ghlUserId: install.ghlUserId,
       ghlLocationId: install.ghlLocationId,
+      hasAccessToken: !!install.ghlAccessToken,
+      scopes: install.ghlScopes,
       installationDate: install.installationDate,
       isActive: install.isActive,
       hasToken: !!install.ghlAccessToken
     }))
   });
 });
-
-app.get('/api/debug/endpoints', (req, res) => {
+// Installation details endpoint - provides complete installation data for development
+app.get('/api/installations/:id/details', (req, res) => {
+  const installation = storage.getInstallationById(req.params.id);
+  if (installation) {
+    res.json({
+      success: true,
+      installation: {
+        id: installation.id,
+        ghlUserId: installation.ghlUserId,
+        ghlLocationId: installation.ghlLocationId,
+        ghlAccessToken: installation.ghlAccessToken,
+        ghlRefreshToken: installation.ghlRefreshToken,
+        ghlTokenType: installation.ghlTokenType,
+        ghlScopes: installation.ghlScopes,
+        installationDate: installation.installationDate,
+        isActive: installation.isActive
+      }
+    });
+  } else {
+    res.status(404).json({ success: false, error: 'Installation not found' });
+  }
+});
+// Latest installation endpoint - provides most recent installation details
+app.get('/api/installations/latest', (req, res) => {
+  const installations = storage.getAllInstallations();
+  if (installations.length > 0) {
+    const latest = installations[0]; // Already sorted by date descending
+    res.json({
+      success: true,
+      installation: {
+        id: latest.id,
+        ghlUserId: latest.ghlUserId,
+        ghlLocationId: latest.ghlLocationId,
+        ghlAccessToken: latest.ghlAccessToken,
+        ghlRefreshToken: latest.ghlRefreshToken,
+        ghlTokenType: latest.ghlTokenType,
+        ghlScopes: latest.ghlScopes,
+        installationDate: latest.installationDate,
+        isActive: latest.isActive
+      }
+    });
+  } else {
+    res.status(404).json({ success: false, error: 'No installations found' });
+  }
+});
+// All installations endpoint with complete details
+app.get('/api/installations/all', (req, res) => {
+  const installations = storage.getAllInstallations();
   res.json({
     success: true,
-    count: GHL_API_ENDPOINTS.length,
-    endpoints: GHL_API_ENDPOINTS.map(endpoint => ({
-      path: endpoint.path,
-      method: endpoint.method,
-      ghlEndpoint: endpoint.ghlEndpoint,
-      requiresLocationId: endpoint.requiresLocationId,
-      scope: endpoint.scope
+    count: installations.length,
+    installations: installations.map(install => ({
+      id: install.id,
+      ghlUserId: install.ghlUserId,
+      ghlLocationId: install.ghlLocationId,
+      ghlAccessToken: install.ghlAccessToken,
+      ghlRefreshToken: install.ghlRefreshToken,
+      ghlTokenType: install.ghlTokenType,
+      ghlScopes: install.ghlScopes,
+      installationDate: install.installationDate,
+      isActive: install.isActive
     }))
   });
 });
-
-// Universal GHL API router
-app.all('/api/ghl/*', UniversalAPIHandler.handleUniversalRequest);
-
+// API Documentation
+app.get('/api/ghl/docs', (req, res) => {
+  res.json({
+    success: true,
+    documentation: {
+      baseUrl: '/api/ghl',
+      authentication: 'OAuth2 Bearer Token (stored from installation)',
+      totalEndpoints: GHL_API_ENDPOINTS.length,
+      endpoints: GHL_API_ENDPOINTS.map(endpoint => ({
+        method: endpoint.method,
+        path: `/api/ghl${endpoint.path}`,
+        scope: endpoint.scope,
+        requiresLocationId: endpoint.requiresLocationId
+      })),
+      parameters: {
+        headers: {
+          'x-installation-id': 'Optional: Specific installation ID',
+          'x-location-id': 'Optional: Override location ID'
+        },
+        query: {
+          limit: 'Pagination limit',
+          offset: 'Pagination offset',
+          search: 'Search term (for products)',
+          installationId: 'Alternative to header',
+          locationId: 'Alternative to header'
+        }
+      }
+    }
+  });
+});
+// Test all endpoints
+app.get('/api/ghl/test/all', requireOAuth, async (req, res) => {
+  try {
+    const installationId = req.query.installationId;
+    const installation = await UniversalAPIHandler.getInstallation(installationId);
+    
+    const testResults = {};
+    const testEndpoints = [
+      { method: 'GET', path: '/products', name: 'products' },
+      { method: 'GET', path: '/contacts', name: 'contacts' },
+      { method: 'GET', path: '/locations', name: 'locations' },
+      { method: 'GET', path: '/workflows', name: 'workflows' },
+      { method: 'GET', path: '/forms', name: 'forms' },
+      { method: 'GET', path: '/media', name: 'media' },
+      { method: 'GET', path: '/user/info', name: 'userInfo' }
+    ];
+    
+    for (const testEndpoint of testEndpoints) {
+      try {
+        const config = UniversalAPIHandler.findEndpointConfig(testEndpoint.method, testEndpoint.path);
+        if (config) {
+          const result = await UniversalAPIHandler.makeGHLRequest(
+            config, 
+            {}, 
+            { limit: 5 }, 
+            null, 
+            {}, 
+            installation, 
+            installation.ghlLocationId
+          );
+          testResults[testEndpoint.name] = {
+            success: result.success,
+            status: result.status,
+            hasData: !!result.data
+          };
+        }
+      } catch (error) {
+        testResults[testEndpoint.name] = { 
+          success: false, 
+          error: error.message 
+        };
+      }
+    }
+    
+    res.json({
+      success: true,
+      installation: {
+        id: installation.id,
+        locationId: installation.ghlLocationId
+      },
+      testResults
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Test failed',
+      details: error.message
+    });
+  }
+});
+// Universal GHL API router - handles all endpoint requests dynamically
+app.use('/api/ghl', requireOAuth, (req, res) => {
+  UniversalAPIHandler.handleUniversalRequest(req, res);
+});
+// Default route
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    service: 'GoHighLevel Universal API Backend',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      oauth: '/api/oauth/url',
+      installations: '/api/debug/installations',
+      installationDetails: '/api/installations/:id/details',
+      latestInstallation: '/api/installations/latest',
+      allInstallations: '/api/installations/all',
+      documentation: '/api/ghl/docs',
+      universalAPI: '/api/ghl/*'
+    },
+    timestamp: new Date().toISOString()
+  });
+});
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Universal GHL API Backend running on port ${PORT}`);
-  console.log(`📊 Supporting ${GHL_API_ENDPOINTS.length} API endpoints`);
-  console.log(`🔗 OAuth callback: /api/oauth/callback`);
-  console.log(`📋 Health check: /health`);
+  console.log(`GoHighLevel Universal API Backend running on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`OAuth URL: http://localhost:${PORT}/api/oauth/url`);
+  console.log(`API Documentation: http://localhost:${PORT}/api/ghl/docs`);
 });
-
 module.exports = app;
