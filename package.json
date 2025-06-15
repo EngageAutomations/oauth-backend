@@ -2,10 +2,10 @@
   "name": "gohighlevel-oauth-backend",
   "version": "1.0.0",
   "description": "Working OAuth Backend for GoHighLevel Marketplace",
-  "main": "railway-working-backend.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node railway-working-backend.js",
-    "dev": "node railway-working-backend.js"
+    "start": "node index.js",
+    "dev": "node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
