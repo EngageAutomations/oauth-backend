@@ -1,19 +1,18 @@
 {
-  "name": "gohighlevel-enhanced-oauth-backend",
-  "version": "2.0.0",
-  "description": "Enhanced OAuth Dual-Domain Architecture for GoHighLevel Marketplace",
-  "main": "index.js",
+  "name": "gohighlevel-oauth-backend",
+  "version": "1.0.0",
+  "description": "Working OAuth Backend for GoHighLevel Marketplace",
+  "main": "railway-working-backend.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js"
+    "start": "node railway-working-backend.js",
+    "dev": "node railway-working-backend.js"
   },
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
-    "@neondatabase/serverless": "^0.9.0",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^2.7.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=16.0.0"
   }
 }
