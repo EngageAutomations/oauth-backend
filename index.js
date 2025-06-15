@@ -37,7 +37,6 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // In-memory storage for OAuth installations
 const installations = new Map();
-let installationCounter = 1;
 
 /**
  * FIXED: OAuth Auth Endpoint - Frontend compatibility
@@ -316,7 +315,7 @@ app.get('/oauth/callback', async (req, res) => {
   }
 });
 
-// Health check endpoint
+// Health check endpoint (NEW - version 2.0.0)
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'healthy',
@@ -328,6 +327,17 @@ app.get('/api/health', (req, res) => {
       'Added missing /api/oauth/auth endpoint',
       'Enhanced error handling and token management'
     ]
+  });
+});
+
+// Legacy health endpoint for compatibility
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    service: 'oauth-backend',
+    version: '2.0.0',
+    message: 'Railway OAuth Backend - Fixed and Updated'
   });
 });
 
@@ -363,6 +373,7 @@ app.use('*', (req, res) => {
     message: `Endpoint ${req.method} ${req.originalUrl} not found`,
     available_endpoints: [
       'GET /api/health',
+      'GET /health',
       'GET /api/oauth/auth',
       'GET /api/oauth/status', 
       'GET /oauth/callback',
@@ -378,6 +389,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('✅ Corrected GoHighLevel user API endpoint: /users/me');
   console.log('✅ Added missing /api/oauth/auth endpoint');
   console.log('✅ Enhanced error handling and token management');
+  console.log('✅ Updated version to 2.0.0');
 });
 
 module.exports = app;
