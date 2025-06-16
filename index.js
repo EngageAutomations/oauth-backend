@@ -1,7 +1,6 @@
 /**
- * Railway Hybrid OAuth Backend v2.2.0
- * Supports both environment variables and per-request credentials
- * Secure implementation with HTTPS-only credential transmission
+ * Railway Hybrid OAuth Backend v2.2.1
+ * Fixed GoHighLevel user API endpoint
  */
 
 const express = require('express');
@@ -58,26 +57,27 @@ function getOAuthCredentials(req) {
 }
 
 // Enhanced startup validation
-console.log('=== Railway Hybrid OAuth Backend v2.2.0 ===');
+console.log('=== Railway Hybrid OAuth Backend v2.2.1 ===');
 console.log('Environment Variables Check:');
 console.log(`GHL_CLIENT_ID: ${process.env.GHL_CLIENT_ID ? 'SET' : 'NOT SET'}`);
 console.log(`GHL_CLIENT_SECRET: ${process.env.GHL_CLIENT_SECRET ? 'SET' : 'NOT SET'}`);
 console.log(`GHL_REDIRECT_URI: ${process.env.GHL_REDIRECT_URI ? 'SET' : 'NOT SET'}`);
 console.log('Per-request credentials: SUPPORTED');
-console.log('Hybrid OAuth mode: ACTIVE');
+console.log('User API endpoint: FIXED');
 console.log('===========================================');
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
-    version: '2.2.0',
+    version: '2.2.1',
     timestamp: new Date().toISOString(),
     service: 'railway-hybrid-oauth-backend',
     features: {
       environment_variables: !!(process.env.GHL_CLIENT_ID && process.env.GHL_CLIENT_SECRET),
       per_request_credentials: true,
-      hybrid_mode: true
+      hybrid_mode: true,
+      fixed_user_endpoint: true
     }
   });
 });
@@ -86,15 +86,15 @@ app.get('/health', (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'healthy',
-    version: '2.2.0',
+    version: '2.2.1',
     backend: 'railway-hybrid-oauth',
     timestamp: new Date().toISOString(),
     oauth_methods: ['environment_variables', 'per_request_credentials'],
     fixes: [
+      'Fixed GoHighLevel user API endpoint',
       'Added hybrid OAuth credential support',
       'Per-request credential transmission',
-      'Railway environment variable compatibility',
-      'Maintained backward compatibility'
+      'Railway environment variable compatibility'
     ]
   });
 });
@@ -157,8 +157,11 @@ app.post(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
       });
     }
 
-    // Get user information
-    const userResponse = await fetch('https://services.leadconnectorhq.com/users/me', {
+    console.log('✅ Token exchange successful, getting user info...');
+
+    // FIXED: Get user information using correct endpoint
+    const userResponse = await fetch('https://services.leadconnectorhq.com/users/search', {
+      method: 'GET',
       headers: {
         'Authorization': `Bearer ${tokenData.access_token}`,
         'Version': '2021-07-28'
@@ -168,25 +171,108 @@ app.post(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
     const userData = await userResponse.json();
 
     if (!userResponse.ok) {
-      console.log('❌ User info retrieval failed:', userData);
-      return res.status(400).json({
-        error: 'user_info_failed',
-        details: userData
+      console.log('❌ User info retrieval failed (search endpoint):', userData);
+      
+      // Try alternative endpoint
+      const altUserResponse = await fetch('https://services.leadconnectorhq.com/oauth/userinfo', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${tokenData.access_token}`
+        }
       });
+
+      const altUserData = await altUserResponse.json();
+
+      if (!altUserResponse.ok) {
+        console.log('❌ Alternative user info failed:', altUserData);
+        return res.status(400).json({
+          error: 'user_info_failed',
+          details: { search_endpoint: userData, userinfo_endpoint: altUserData },
+          attempted_endpoints: [
+            'https://services.leadconnectorhq.com/users/search',
+            'https://services.leadconnectorhq.com/oauth/userinfo'
+          ]
+        });
+      }
+
+      console.log('✅ User info retrieved from alternative endpoint');
+      
+      // Use alternative user data
+      const processedUserData = {
+        id: altUserData.sub || altUserData.id || 'unknown',
+        name: altUserData.name || altUserData.given_name || 'Unknown User',
+        email: altUserData.email || 'unknown@example.com',
+        locationId: altUserData.locationId || altUserData.location_id || 'unknown',
+        locationName: altUserData.locationName || altUserData.location_name || 'Unknown Location'
+      };
+
+      // Store installation data
+      const installationId = `install_${Date.now()}`;
+      const installation = {
+        id: installationId,
+        ghlUserId: processedUserData.id,
+        ghlLocationId: processedUserData.locationId,
+        ghlLocationName: processedUserData.locationName,
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token,
+        tokenExpiry: new Date(Date.now() + (tokenData.expires_in * 1000)),
+        scopes: tokenData.scope || 'unknown',
+        userInfo: processedUserData,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      installations.set(installationId, installation);
+
+      console.log('✅ OAuth installation successful (POST - alt endpoint):', {
+        installationId,
+        userId: processedUserData.id,
+        locationId: processedUserData.locationId
+      });
+
+      return res.json({
+        success: true,
+        installation_id: installationId,
+        user_info: processedUserData,
+        redirect_url: `https://listings.engageautomations.com/oauth-success?installation_id=${installationId}`,
+        endpoint_used: 'oauth/userinfo'
+      });
+    }
+
+    // Process users/search response
+    let processedUserData;
+    if (userData.users && userData.users.length > 0) {
+      const user = userData.users[0];
+      processedUserData = {
+        id: user.id || 'unknown',
+        name: user.name || user.firstName + ' ' + user.lastName || 'Unknown User',
+        email: user.email || 'unknown@example.com',
+        locationId: user.locationId || 'unknown',
+        locationName: user.locationName || 'Unknown Location'
+      };
+    } else {
+      // Handle different response format
+      processedUserData = {
+        id: userData.id || 'unknown',
+        name: userData.name || userData.firstName + ' ' + userData.lastName || 'Unknown User',
+        email: userData.email || 'unknown@example.com',
+        locationId: userData.locationId || 'unknown',
+        locationName: userData.locationName || 'Unknown Location'
+      };
     }
 
     // Store installation data
     const installationId = `install_${Date.now()}`;
     const installation = {
       id: installationId,
-      ghlUserId: userData.id,
-      ghlLocationId: userData.locationId || 'unknown',
-      ghlLocationName: userData.locationName || 'Unknown Location',
+      ghlUserId: processedUserData.id,
+      ghlLocationId: processedUserData.locationId,
+      ghlLocationName: processedUserData.locationName,
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token,
       tokenExpiry: new Date(Date.now() + (tokenData.expires_in * 1000)),
       scopes: tokenData.scope || 'unknown',
-      userInfo: userData,
+      userInfo: processedUserData,
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -195,16 +281,17 @@ app.post(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
 
     console.log('✅ OAuth installation successful (POST):', {
       installationId,
-      userId: userData.id,
-      locationId: userData.locationId
+      userId: processedUserData.id,
+      locationId: processedUserData.locationId
     });
 
     // Return JSON response for API calls
     res.json({
       success: true,
       installation_id: installationId,
-      user_info: userData,
-      redirect_url: `https://listings.engageautomations.com/oauth-success?installation_id=${installationId}`
+      user_info: processedUserData,
+      redirect_url: `https://listings.engageautomations.com/oauth-success?installation_id=${installationId}`,
+      endpoint_used: 'users/search'
     });
 
   } catch (error) {
@@ -280,8 +367,11 @@ app.get(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
       });
     }
 
-    // Get user information
-    const userResponse = await fetch('https://services.leadconnectorhq.com/users/me', {
+    console.log('✅ Token exchange successful, getting user info...');
+
+    // FIXED: Get user information using correct endpoint
+    const userResponse = await fetch('https://services.leadconnectorhq.com/users/search', {
+      method: 'GET',
       headers: {
         'Authorization': `Bearer ${tokenData.access_token}`,
         'Version': '2021-07-28'
@@ -291,25 +381,100 @@ app.get(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
     const userData = await userResponse.json();
 
     if (!userResponse.ok) {
-      console.log('❌ User info retrieval failed:', userData);
-      return res.status(400).json({
-        error: 'user_info_failed',
-        details: userData
+      console.log('❌ User info retrieval failed (search endpoint):', userData);
+      
+      // Try alternative endpoint
+      const altUserResponse = await fetch('https://services.leadconnectorhq.com/oauth/userinfo', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${tokenData.access_token}`
+        }
       });
+
+      const altUserData = await altUserResponse.json();
+
+      if (!altUserResponse.ok) {
+        console.log('❌ Alternative user info failed:', altUserData);
+        return res.status(400).json({
+          error: 'user_info_failed',
+          details: { search_endpoint: userData, userinfo_endpoint: altUserData }
+        });
+      }
+
+      console.log('✅ User info retrieved from alternative endpoint');
+      
+      // Use alternative user data
+      const processedUserData = {
+        id: altUserData.sub || altUserData.id || 'unknown',
+        name: altUserData.name || altUserData.given_name || 'Unknown User',
+        email: altUserData.email || 'unknown@example.com',
+        locationId: altUserData.locationId || altUserData.location_id || 'unknown',
+        locationName: altUserData.locationName || altUserData.location_name || 'Unknown Location'
+      };
+
+      // Store installation data
+      const installationId = `install_${Date.now()}`;
+      const installation = {
+        id: installationId,
+        ghlUserId: processedUserData.id,
+        ghlLocationId: processedUserData.locationId,
+        ghlLocationName: processedUserData.locationName,
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token,
+        tokenExpiry: new Date(Date.now() + (tokenData.expires_in * 1000)),
+        scopes: tokenData.scope || 'unknown',
+        userInfo: processedUserData,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      installations.set(installationId, installation);
+
+      console.log('✅ OAuth installation successful (alt endpoint):', {
+        installationId,
+        userId: processedUserData.id,
+        locationId: processedUserData.locationId
+      });
+
+      // Redirect to success page
+      const successUrl = `https://listings.engageautomations.com/oauth-success?installation_id=${installationId}`;
+      return res.redirect(successUrl);
+    }
+
+    // Process users/search response
+    let processedUserData;
+    if (userData.users && userData.users.length > 0) {
+      const user = userData.users[0];
+      processedUserData = {
+        id: user.id || 'unknown',
+        name: user.name || user.firstName + ' ' + user.lastName || 'Unknown User',
+        email: user.email || 'unknown@example.com',
+        locationId: user.locationId || 'unknown',
+        locationName: user.locationName || 'Unknown Location'
+      };
+    } else {
+      // Handle different response format
+      processedUserData = {
+        id: userData.id || 'unknown',
+        name: userData.name || userData.firstName + ' ' + userData.lastName || 'Unknown User',
+        email: userData.email || 'unknown@example.com',
+        locationId: userData.locationId || 'unknown',
+        locationName: userData.locationName || 'Unknown Location'
+      };
     }
 
     // Store installation data
     const installationId = `install_${Date.now()}`;
     const installation = {
       id: installationId,
-      ghlUserId: userData.id,
-      ghlLocationId: userData.locationId || 'unknown',
-      ghlLocationName: userData.locationName || 'Unknown Location',
+      ghlUserId: processedUserData.id,
+      ghlLocationId: processedUserData.locationId,
+      ghlLocationName: processedUserData.locationName,
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token,
       tokenExpiry: new Date(Date.now() + (tokenData.expires_in * 1000)),
       scopes: tokenData.scope || 'unknown',
-      userInfo: userData,
+      userInfo: processedUserData,
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -318,8 +483,8 @@ app.get(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
 
     console.log('✅ OAuth installation successful:', {
       installationId,
-      userId: userData.id,
-      locationId: userData.locationId
+      userId: processedUserData.id,
+      locationId: processedUserData.locationId
     });
 
     // Redirect to success page
@@ -455,10 +620,10 @@ app.use((error, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Railway Hybrid OAuth Backend v2.2.0 running on port ${PORT}`);
+  console.log(`🚀 Railway Hybrid OAuth Backend v2.2.1 running on port ${PORT}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   console.log(`🔐 OAuth callback: http://localhost:${PORT}/oauth/callback`);
-  console.log(`📊 Features: Environment variables + Per-request credentials`);
+  console.log(`📊 Features: Environment variables + Per-request credentials + Fixed user endpoint`);
 });
 
 module.exports = app;
