@@ -1,6 +1,6 @@
 /**
- * Railway Hybrid OAuth Backend v2.2.1
- * Fixed GoHighLevel user API endpoint
+ * Railway Hybrid OAuth Backend v2.2.2
+ * Corrected GoHighLevel user API endpoint with proper user ID
  */
 
 const express = require('express');
@@ -57,47 +57,123 @@ function getOAuthCredentials(req) {
 }
 
 // Enhanced startup validation
-console.log('=== Railway Hybrid OAuth Backend v2.2.1 ===');
+console.log('=== Railway Hybrid OAuth Backend v2.2.2 ===');
 console.log('Environment Variables Check:');
 console.log(`GHL_CLIENT_ID: ${process.env.GHL_CLIENT_ID ? 'SET' : 'NOT SET'}`);
 console.log(`GHL_CLIENT_SECRET: ${process.env.GHL_CLIENT_SECRET ? 'SET' : 'NOT SET'}`);
 console.log(`GHL_REDIRECT_URI: ${process.env.GHL_REDIRECT_URI ? 'SET' : 'NOT SET'}`);
 console.log('Per-request credentials: SUPPORTED');
-console.log('User API endpoint: FIXED');
+console.log('User API endpoint: CORRECTED with proper user ID');
 console.log('===========================================');
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
-    version: '2.2.1',
+    version: '2.2.2',
     timestamp: new Date().toISOString(),
     service: 'railway-hybrid-oauth-backend',
     features: {
       environment_variables: !!(process.env.GHL_CLIENT_ID && process.env.GHL_CLIENT_SECRET),
       per_request_credentials: true,
       hybrid_mode: true,
-      fixed_user_endpoint: true
+      corrected_user_endpoint: true
     }
   });
 });
 
-// API health endpoint
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    version: '2.2.1',
-    backend: 'railway-hybrid-oauth',
-    timestamp: new Date().toISOString(),
-    oauth_methods: ['environment_variables', 'per_request_credentials'],
-    fixes: [
-      'Fixed GoHighLevel user API endpoint',
-      'Added hybrid OAuth credential support',
-      'Per-request credential transmission',
-      'Railway environment variable compatibility'
-    ]
-  });
-});
+// Function to get user info using proper GoHighLevel API format
+async function getUserInfo(accessToken, userId = null) {
+  console.log('🔍 Getting user info with access token...');
+  
+  // Method 1: Try with specific user ID if available
+  if (userId) {
+    console.log(`Attempting /users/${userId} endpoint...`);
+    try {
+      const userResponse = await fetch(`https://services.leadconnectorhq.com/users/${userId}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+          'Version': '2021-07-28'
+        }
+      });
+
+      if (userResponse.ok) {
+        const userData = await userResponse.json();
+        console.log('✅ User info retrieved with specific user ID');
+        return { success: true, data: userData, method: 'specific_user_id' };
+      } else {
+        const errorData = await userResponse.json();
+        console.log(`❌ /users/${userId} failed:`, errorData);
+      }
+    } catch (error) {
+      console.log(`❌ Error calling /users/${userId}:`, error.message);
+    }
+  }
+  
+  // Method 2: Try OAuth userinfo endpoint (standard approach)
+  console.log('Attempting /oauth/userinfo endpoint...');
+  try {
+    const userInfoResponse = await fetch('https://services.leadconnectorhq.com/oauth/userinfo', {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+
+    if (userInfoResponse.ok) {
+      const userInfoData = await userInfoResponse.json();
+      console.log('✅ User info retrieved from OAuth userinfo');
+      
+      // Extract user ID from userinfo response
+      const extractedUserId = userInfoData.sub || userInfoData.user_id || userInfoData.id;
+      
+      // If we got a user ID, try the specific endpoint again
+      if (extractedUserId && !userId) {
+        console.log(`🔄 Retrying with extracted user ID: ${extractedUserId}`);
+        const retryResult = await getUserInfo(accessToken, extractedUserId);
+        if (retryResult.success) {
+          return retryResult;
+        }
+      }
+      
+      return { success: true, data: userInfoData, method: 'oauth_userinfo' };
+    } else {
+      const errorData = await userInfoResponse.json();
+      console.log('❌ /oauth/userinfo failed:', errorData);
+    }
+  } catch (error) {
+    console.log('❌ Error calling /oauth/userinfo:', error.message);
+  }
+  
+  // Method 3: Try users search endpoint as final fallback
+  console.log('Attempting /users/search endpoint as fallback...');
+  try {
+    const searchResponse = await fetch('https://services.leadconnectorhq.com/users/search', {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+        'Version': '2021-07-28'
+      }
+    });
+
+    if (searchResponse.ok) {
+      const searchData = await searchResponse.json();
+      console.log('✅ User info retrieved from search fallback');
+      return { success: true, data: searchData, method: 'users_search' };
+    } else {
+      const errorData = await searchResponse.json();
+      console.log('❌ /users/search failed:', errorData);
+    }
+  } catch (error) {
+    console.log('❌ Error calling /users/search:', error.message);
+  }
+  
+  return { success: false, error: 'All user info methods failed' };
+}
 
 // POST OAuth callback with per-request credentials (Railway compatibility)
 app.post(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
@@ -159,106 +235,61 @@ app.post(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
 
     console.log('✅ Token exchange successful, getting user info...');
 
-    // FIXED: Get user information using correct endpoint
-    const userResponse = await fetch('https://services.leadconnectorhq.com/users/search', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${tokenData.access_token}`,
-        'Version': '2021-07-28'
-      }
-    });
-
-    const userData = await userResponse.json();
-
-    if (!userResponse.ok) {
-      console.log('❌ User info retrieval failed (search endpoint):', userData);
-      
-      // Try alternative endpoint
-      const altUserResponse = await fetch('https://services.leadconnectorhq.com/oauth/userinfo', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${tokenData.access_token}`
-        }
-      });
-
-      const altUserData = await altUserResponse.json();
-
-      if (!altUserResponse.ok) {
-        console.log('❌ Alternative user info failed:', altUserData);
-        return res.status(400).json({
-          error: 'user_info_failed',
-          details: { search_endpoint: userData, userinfo_endpoint: altUserData },
-          attempted_endpoints: [
-            'https://services.leadconnectorhq.com/users/search',
-            'https://services.leadconnectorhq.com/oauth/userinfo'
-          ]
-        });
-      }
-
-      console.log('✅ User info retrieved from alternative endpoint');
-      
-      // Use alternative user data
-      const processedUserData = {
-        id: altUserData.sub || altUserData.id || 'unknown',
-        name: altUserData.name || altUserData.given_name || 'Unknown User',
-        email: altUserData.email || 'unknown@example.com',
-        locationId: altUserData.locationId || altUserData.location_id || 'unknown',
-        locationName: altUserData.locationName || altUserData.location_name || 'Unknown Location'
-      };
-
-      // Store installation data
-      const installationId = `install_${Date.now()}`;
-      const installation = {
-        id: installationId,
-        ghlUserId: processedUserData.id,
-        ghlLocationId: processedUserData.locationId,
-        ghlLocationName: processedUserData.locationName,
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-        tokenExpiry: new Date(Date.now() + (tokenData.expires_in * 1000)),
-        scopes: tokenData.scope || 'unknown',
-        userInfo: processedUserData,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-
-      installations.set(installationId, installation);
-
-      console.log('✅ OAuth installation successful (POST - alt endpoint):', {
-        installationId,
-        userId: processedUserData.id,
-        locationId: processedUserData.locationId
-      });
-
-      return res.json({
-        success: true,
-        installation_id: installationId,
-        user_info: processedUserData,
-        redirect_url: `https://listings.engageautomations.com/oauth-success?installation_id=${installationId}`,
-        endpoint_used: 'oauth/userinfo'
+    // CORRECTED: Get user information using proper GoHighLevel API format
+    const userInfoResult = await getUserInfo(tokenData.access_token);
+    
+    if (!userInfoResult.success) {
+      return res.status(400).json({
+        error: 'user_info_failed',
+        message: 'Unable to retrieve user information from any endpoint',
+        attempted_methods: ['specific_user_id', 'oauth_userinfo', 'users_search']
       });
     }
 
-    // Process users/search response
+    console.log(`✅ User info retrieved using method: ${userInfoResult.method}`);
+
+    // Process user data based on response format
     let processedUserData;
-    if (userData.users && userData.users.length > 0) {
-      const user = userData.users[0];
-      processedUserData = {
-        id: user.id || 'unknown',
-        name: user.name || user.firstName + ' ' + user.lastName || 'Unknown User',
-        email: user.email || 'unknown@example.com',
-        locationId: user.locationId || 'unknown',
-        locationName: user.locationName || 'Unknown Location'
-      };
-    } else {
-      // Handle different response format
+    const userData = userInfoResult.data;
+    
+    if (userInfoResult.method === 'specific_user_id') {
+      // Direct user endpoint response
       processedUserData = {
         id: userData.id || 'unknown',
-        name: userData.name || userData.firstName + ' ' + userData.lastName || 'Unknown User',
+        name: userData.name || `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || 'Unknown User',
         email: userData.email || 'unknown@example.com',
-        locationId: userData.locationId || 'unknown',
-        locationName: userData.locationName || 'Unknown Location'
+        locationId: userData.locationId || userData.location?.id || 'unknown',
+        locationName: userData.locationName || userData.location?.name || 'Unknown Location'
       };
+    } else if (userInfoResult.method === 'oauth_userinfo') {
+      // OAuth userinfo response
+      processedUserData = {
+        id: userData.sub || userData.user_id || userData.id || 'unknown',
+        name: userData.name || userData.given_name || 'Unknown User',
+        email: userData.email || 'unknown@example.com',
+        locationId: userData.locationId || userData.location_id || 'unknown',
+        locationName: userData.locationName || userData.location_name || 'Unknown Location'
+      };
+    } else {
+      // Users search response
+      if (userData.users && userData.users.length > 0) {
+        const user = userData.users[0];
+        processedUserData = {
+          id: user.id || 'unknown',
+          name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Unknown User',
+          email: user.email || 'unknown@example.com',
+          locationId: user.locationId || 'unknown',
+          locationName: user.locationName || 'Unknown Location'
+        };
+      } else {
+        processedUserData = {
+          id: userData.id || 'unknown',
+          name: userData.name || 'Unknown User',
+          email: userData.email || 'unknown@example.com',
+          locationId: userData.locationId || 'unknown',
+          locationName: userData.locationName || 'Unknown Location'
+        };
+      }
     }
 
     // Store installation data
@@ -274,7 +305,8 @@ app.post(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
       scopes: tokenData.scope || 'unknown',
       userInfo: processedUserData,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      retrievalMethod: userInfoResult.method
     };
 
     installations.set(installationId, installation);
@@ -282,7 +314,8 @@ app.post(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
     console.log('✅ OAuth installation successful (POST):', {
       installationId,
       userId: processedUserData.id,
-      locationId: processedUserData.locationId
+      locationId: processedUserData.locationId,
+      method: userInfoResult.method
     });
 
     // Return JSON response for API calls
@@ -291,7 +324,7 @@ app.post(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
       installation_id: installationId,
       user_info: processedUserData,
       redirect_url: `https://listings.engageautomations.com/oauth-success?installation_id=${installationId}`,
-      endpoint_used: 'users/search'
+      endpoint_used: userInfoResult.method
     });
 
   } catch (error) {
@@ -369,98 +402,57 @@ app.get(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
 
     console.log('✅ Token exchange successful, getting user info...');
 
-    // FIXED: Get user information using correct endpoint
-    const userResponse = await fetch('https://services.leadconnectorhq.com/users/search', {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${tokenData.access_token}`,
-        'Version': '2021-07-28'
-      }
-    });
-
-    const userData = await userResponse.json();
-
-    if (!userResponse.ok) {
-      console.log('❌ User info retrieval failed (search endpoint):', userData);
-      
-      // Try alternative endpoint
-      const altUserResponse = await fetch('https://services.leadconnectorhq.com/oauth/userinfo', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${tokenData.access_token}`
-        }
+    // CORRECTED: Get user information using proper GoHighLevel API format
+    const userInfoResult = await getUserInfo(tokenData.access_token);
+    
+    if (!userInfoResult.success) {
+      return res.status(400).json({
+        error: 'user_info_failed',
+        message: 'Unable to retrieve user information from any endpoint'
       });
-
-      const altUserData = await altUserResponse.json();
-
-      if (!altUserResponse.ok) {
-        console.log('❌ Alternative user info failed:', altUserData);
-        return res.status(400).json({
-          error: 'user_info_failed',
-          details: { search_endpoint: userData, userinfo_endpoint: altUserData }
-        });
-      }
-
-      console.log('✅ User info retrieved from alternative endpoint');
-      
-      // Use alternative user data
-      const processedUserData = {
-        id: altUserData.sub || altUserData.id || 'unknown',
-        name: altUserData.name || altUserData.given_name || 'Unknown User',
-        email: altUserData.email || 'unknown@example.com',
-        locationId: altUserData.locationId || altUserData.location_id || 'unknown',
-        locationName: altUserData.locationName || altUserData.location_name || 'Unknown Location'
-      };
-
-      // Store installation data
-      const installationId = `install_${Date.now()}`;
-      const installation = {
-        id: installationId,
-        ghlUserId: processedUserData.id,
-        ghlLocationId: processedUserData.locationId,
-        ghlLocationName: processedUserData.locationName,
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-        tokenExpiry: new Date(Date.now() + (tokenData.expires_in * 1000)),
-        scopes: tokenData.scope || 'unknown',
-        userInfo: processedUserData,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-
-      installations.set(installationId, installation);
-
-      console.log('✅ OAuth installation successful (alt endpoint):', {
-        installationId,
-        userId: processedUserData.id,
-        locationId: processedUserData.locationId
-      });
-
-      // Redirect to success page
-      const successUrl = `https://listings.engageautomations.com/oauth-success?installation_id=${installationId}`;
-      return res.redirect(successUrl);
     }
 
-    // Process users/search response
+    console.log(`✅ User info retrieved using method: ${userInfoResult.method}`);
+
+    // Process user data (same logic as POST)
     let processedUserData;
-    if (userData.users && userData.users.length > 0) {
-      const user = userData.users[0];
-      processedUserData = {
-        id: user.id || 'unknown',
-        name: user.name || user.firstName + ' ' + user.lastName || 'Unknown User',
-        email: user.email || 'unknown@example.com',
-        locationId: user.locationId || 'unknown',
-        locationName: user.locationName || 'Unknown Location'
-      };
-    } else {
-      // Handle different response format
+    const userData = userInfoResult.data;
+    
+    if (userInfoResult.method === 'specific_user_id') {
       processedUserData = {
         id: userData.id || 'unknown',
-        name: userData.name || userData.firstName + ' ' + userData.lastName || 'Unknown User',
+        name: userData.name || `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || 'Unknown User',
         email: userData.email || 'unknown@example.com',
-        locationId: userData.locationId || 'unknown',
-        locationName: userData.locationName || 'Unknown Location'
+        locationId: userData.locationId || userData.location?.id || 'unknown',
+        locationName: userData.locationName || userData.location?.name || 'Unknown Location'
       };
+    } else if (userInfoResult.method === 'oauth_userinfo') {
+      processedUserData = {
+        id: userData.sub || userData.user_id || userData.id || 'unknown',
+        name: userData.name || userData.given_name || 'Unknown User',
+        email: userData.email || 'unknown@example.com',
+        locationId: userData.locationId || userData.location_id || 'unknown',
+        locationName: userData.locationName || userData.location_name || 'Unknown Location'
+      };
+    } else {
+      if (userData.users && userData.users.length > 0) {
+        const user = userData.users[0];
+        processedUserData = {
+          id: user.id || 'unknown',
+          name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Unknown User',
+          email: user.email || 'unknown@example.com',
+          locationId: user.locationId || 'unknown',
+          locationName: user.locationName || 'Unknown Location'
+        };
+      } else {
+        processedUserData = {
+          id: userData.id || 'unknown',
+          name: userData.name || 'Unknown User',
+          email: userData.email || 'unknown@example.com',
+          locationId: userData.locationId || 'unknown',
+          locationName: userData.locationName || 'Unknown Location'
+        };
+      }
     }
 
     // Store installation data
@@ -476,7 +468,8 @@ app.get(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
       scopes: tokenData.scope || 'unknown',
       userInfo: processedUserData,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      retrievalMethod: userInfoResult.method
     };
 
     installations.set(installationId, installation);
@@ -484,7 +477,8 @@ app.get(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
     console.log('✅ OAuth installation successful:', {
       installationId,
       userId: processedUserData.id,
-      locationId: processedUserData.locationId
+      locationId: processedUserData.locationId,
+      method: userInfoResult.method
     });
 
     // Redirect to success page
@@ -559,7 +553,8 @@ app.get('/api/oauth/status', (req, res) => {
     expires_at: installation.tokenExpiry,
     scopes: installation.scopes,
     location_id: installation.ghlLocationId,
-    location_name: installation.ghlLocationName
+    location_name: installation.ghlLocationName,
+    retrieval_method: installation.retrievalMethod
   });
 });
 
@@ -572,7 +567,8 @@ app.get('/api/installations', (req, res) => {
     ghlLocationName: install.ghlLocationName,
     scopes: install.scopes,
     createdAt: install.createdAt,
-    tokenStatus: install.tokenExpiry > new Date() ? 'valid' : 'expired'
+    tokenStatus: install.tokenExpiry > new Date() ? 'valid' : 'expired',
+    retrievalMethod: install.retrievalMethod
   }));
 
   res.json({
@@ -620,10 +616,10 @@ app.use((error, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Railway Hybrid OAuth Backend v2.2.1 running on port ${PORT}`);
+  console.log(`🚀 Railway Hybrid OAuth Backend v2.2.2 running on port ${PORT}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   console.log(`🔐 OAuth callback: http://localhost:${PORT}/oauth/callback`);
-  console.log(`📊 Features: Environment variables + Per-request credentials + Fixed user endpoint`);
+  console.log(`📊 Features: Environment variables + Per-request credentials + Corrected user endpoint`);
 });
 
 module.exports = app;
