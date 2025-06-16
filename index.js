@@ -6,6 +6,20 @@
 const express = require('express');
 const cors = require('cors');
 
+// Environment variable validation
+console.log('=== Environment Variables Check ===');
+console.log('GHL_CLIENT_ID:', process.env.GHL_CLIENT_ID ? 'SET' : 'NOT SET');
+console.log('GHL_CLIENT_SECRET:', process.env.GHL_CLIENT_SECRET ? 'SET' : 'NOT SET');
+console.log('GHL_REDIRECT_URI:', process.env.GHL_REDIRECT_URI || 'NOT SET');
+
+if (!process.env.GHL_CLIENT_ID || !process.env.GHL_CLIENT_SECRET || !process.env.GHL_REDIRECT_URI) {
+  console.error('❌ Missing required environment variables:');
+  if (!process.env.GHL_CLIENT_ID) console.error('  - GHL_CLIENT_ID');
+  if (!process.env.GHL_CLIENT_SECRET) console.error('  - GHL_CLIENT_SECRET');
+  if (!process.env.GHL_REDIRECT_URI) console.error('  - GHL_REDIRECT_URI');
+  console.error('⚠️  OAuth functionality will fail without these variables');
+}
+
 const app = express();
 
 // Enhanced CORS for OAuth and embedded access
@@ -315,17 +329,18 @@ app.get('/oauth/callback', async (req, res) => {
   }
 });
 
-// Health check endpoint (NEW - version 2.0.0)
+// Health check endpoint (NEW - version 2.0.1)
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
     service: 'oauth-backend',
-    version: '2.0.0',
+    version: '2.0.1',
     fixes: [
       'Corrected GoHighLevel user API endpoint to /users/me',
       'Added missing /api/oauth/auth endpoint',
-      'Enhanced error handling and token management'
+      'Enhanced error handling and token management',
+      'Added environment variable validation'
     ]
   });
 });
@@ -336,8 +351,8 @@ app.get('/health', (req, res) => {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     service: 'oauth-backend',
-    version: '2.0.0',
-    message: 'Railway OAuth Backend - Fixed and Updated'
+    version: '2.0.1',
+    message: 'Railway OAuth Backend - Fixed and Updated with Environment Validation'
   });
 });
 
@@ -389,7 +404,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('✅ Corrected GoHighLevel user API endpoint: /users/me');
   console.log('✅ Added missing /api/oauth/auth endpoint');
   console.log('✅ Enhanced error handling and token management');
-  console.log('✅ Updated version to 2.0.0');
+  console.log('✅ Added environment variable validation');
+  console.log('✅ Updated version to 2.0.1');
 });
 
 module.exports = app;
