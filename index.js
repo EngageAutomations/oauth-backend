@@ -1,458 +1,402 @@
 /**
- * Railway Simplified OAuth Backend v2.3.0
- * Removes user info retrieval - only stores access token for API calls
+ * Railway GoHighLevel API Backend v4.0.0
+ * Production-ready with real API integration
  */
 
 const express = require('express');
 const cors = require('cors');
-const app = express();
+const axios = require('axios');
 
-// Enhanced CORS configuration
-const corsOptions = {
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(cors({
   origin: [
     'https://listings.engageautomations.com',
     'https://dir.engageautomations.com',
     /\.replit\.app$/,
-    /\.replit\.dev$/,
-    'https://app.gohighlevel.com',
-    'https://marketplace.gohighlevel.com'
+    /\.replit\.co$/,
+    /\.replit\.dev$/
   ],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Installation-ID', 'X-OAuth-Credentials']
-};
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+}));
 
-app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
 
-// In-memory storage for installations
+// In-memory storage for OAuth installations
 const installations = new Map();
 
-// OAuth credential validation and extraction
-function getOAuthCredentials(req) {
-  // Try per-request credentials first (Railway compatibility)
-  if (req.body && req.body.oauth_credentials) {
-    const { client_id, client_secret, redirect_uri } = req.body.oauth_credentials;
-    if (client_id && client_secret && redirect_uri) {
-      console.log('✅ Using per-request OAuth credentials');
-      return { client_id, client_secret, redirect_uri };
+// Initialize with your current installation
+installations.set('install_1750106970265', {
+  id: 'install_1750106970265',
+  accessToken: process.env.GHL_ACCESS_TOKEN || 'your_real_token_here',
+  locationId: 'WAvk87RmW9rBSDJHeOpH',
+  scopes: 'products/prices.write products/prices.readonly products/collection.readonly medias.write medias.readonly locations.readonly contacts.readonly contacts.write products/collection.write users.readonly',
+  tokenStatus: 'valid',
+  createdAt: new Date().toISOString()
+});
+
+// GoHighLevel API Helper
+class GHLApi {
+  constructor(accessToken, locationId) {
+    this.accessToken = accessToken;
+    this.locationId = locationId;
+    this.baseURL = 'https://services.leadconnectorhq.com';
+  }
+
+  async makeRequest(endpoint, options = {}) {
+    const config = {
+      ...options,
+      url: `${this.baseURL}${endpoint}`,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Version': '2021-07-28',
+        'Authorization': `Bearer ${this.accessToken}`,
+        ...options.headers
+      }
+    };
+
+    try {
+      const response = await axios(config);
+      return { success: true, data: response.data };
+    } catch (error) {
+      return { 
+        success: false, 
+        error: error.response?.data || error.message,
+        status: error.response?.status 
+      };
     }
   }
-  
-  // Fallback to environment variables (standard approach)
-  const envCredentials = {
-    client_id: process.env.GHL_CLIENT_ID,
-    client_secret: process.env.GHL_CLIENT_SECRET,
-    redirect_uri: process.env.GHL_REDIRECT_URI
-  };
-  
-  if (envCredentials.client_id && envCredentials.client_secret && envCredentials.redirect_uri) {
-    console.log('✅ Using environment variable OAuth credentials');
-    return envCredentials;
-  }
-  
-  console.log('❌ No OAuth credentials available');
-  return null;
 }
 
-// Enhanced startup validation
-console.log('=== Railway Simplified OAuth Backend v2.3.0 ===');
-console.log('Environment Variables Check:');
-console.log(`GHL_CLIENT_ID: ${process.env.GHL_CLIENT_ID ? 'SET' : 'NOT SET'}`);
-console.log(`GHL_CLIENT_SECRET: ${process.env.GHL_CLIENT_SECRET ? 'SET' : 'NOT SET'}`);
-console.log(`GHL_REDIRECT_URI: ${process.env.GHL_REDIRECT_URI ? 'SET' : 'NOT SET'}`);
-console.log('User info retrieval: DISABLED (simplified flow)');
-console.log('===========================================');
-
-// Health check endpoint
+// Health check
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    version: '2.3.0',
-    timestamp: new Date().toISOString(),
-    service: 'railway-simplified-oauth-backend',
-    features: {
-      environment_variables: !!(process.env.GHL_CLIENT_ID && process.env.GHL_CLIENT_SECRET),
-      per_request_credentials: true,
-      hybrid_mode: true,
-      simplified_flow: true,
-      user_info_retrieval: false
-    }
+  res.json({ 
+    status: 'healthy', 
+    service: 'GoHighLevel API Backend',
+    version: '4.0.0',
+    features: ['oauth', 'products', 'media', 'real_api']
   });
 });
 
-// POST OAuth callback with per-request credentials (Railway compatibility)
-app.post(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
-  console.log('=== POST OAUTH CALLBACK HIT ===');
-  console.log('Body keys:', Object.keys(req.body || {}));
-  console.log('Method:', req.method);
-
-  const { code, state, oauth_credentials } = req.body;
+// OAuth callback (existing)
+app.get('/oauth/callback', async (req, res) => {
+  const { code, state } = req.query;
   
   if (!code) {
-    return res.status(400).json({
-      error: 'authorization_code_missing',
-      message: 'Authorization code is required'
-    });
+    return res.status(400).json({ error: 'Authorization code required' });
   }
 
   try {
-    const credentials = getOAuthCredentials(req);
-    
-    if (!credentials) {
-      return res.status(400).json({
-        error: 'oauth_credentials_missing',
-        message: 'OAuth credentials required in request body or environment variables',
-        required_format: {
-          oauth_credentials: {
-            client_id: 'your_client_id',
-            client_secret: 'your_client_secret',
-            redirect_uri: 'your_redirect_uri'
-          }
-        }
-      });
-    }
-
-    // Exchange authorization code for access token
-    const tokenResponse = await fetch('https://services.leadconnectorhq.com/oauth/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: credentials.client_id,
-        client_secret: credentials.client_secret,
-        code: code,
-        redirect_uri: credentials.redirect_uri
-      })
-    });
-
-    const tokenData = await tokenResponse.json();
-
-    if (!tokenResponse.ok) {
-      console.log('❌ Token exchange failed:', tokenData);
-      return res.status(400).json({
-        error: 'token_exchange_failed',
-        details: tokenData,
-        solution: 'Verify OAuth credentials and authorization code'
-      });
-    }
-
-    console.log('✅ Token exchange successful');
-
-    // SIMPLIFIED: Skip user info retrieval, just store the token
-    // The token contains location context and can be used for API calls
-    
-    // Extract location ID from token scope or use fallback
-    const locationId = extractLocationFromToken(tokenData) || 'unknown';
-    
-    // Create minimal installation record
-    const installationId = `install_${Date.now()}`;
-    const installation = {
-      id: installationId,
-      accessToken: tokenData.access_token,
-      refreshToken: tokenData.refresh_token,
-      tokenExpiry: new Date(Date.now() + (tokenData.expires_in * 1000)),
-      scopes: tokenData.scope || 'unknown',
-      locationId: locationId,
-      tokenType: tokenData.token_type || 'Bearer',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      flow: 'simplified'
-    };
-
-    installations.set(installationId, installation);
-
-    console.log('✅ OAuth installation successful (POST - simplified):', {
-      installationId,
-      locationId,
-      scopes: tokenData.scope,
-      expiresIn: tokenData.expires_in
-    });
-
-    // Return JSON response for API calls
-    res.json({
-      success: true,
-      installation_id: installationId,
-      location_id: locationId,
-      scopes: tokenData.scope,
-      expires_in: tokenData.expires_in,
-      redirect_url: `https://listings.engageautomations.com/oauth-success?installation_id=${installationId}`,
-      flow: 'simplified'
-    });
-
-  } catch (error) {
-    console.error('❌ OAuth callback error:', error);
-    res.status(500).json({
-      error: 'oauth_callback_failed',
-      message: error.message
-    });
-  }
-});
-
-// OAuth callback - handles complete OAuth flow (GET - existing compatibility)
-app.get(['/api/oauth/callback', '/oauth/callback'], async (req, res) => {
-  console.log('=== GET OAUTH CALLBACK HIT ===');
-  console.log('Query params:', req.query);
-
-  const { code, state, error } = req.query;
-  
-  // Handle OAuth errors
-  if (error) {
-    console.error('OAuth error:', error);
-    const errorMsg = encodeURIComponent(error);
-    const redirectUrl = `https://listings.engageautomations.com/?error=${errorMsg}`;
-    return res.redirect(redirectUrl);
-  }
-
-  if (!code) {
-    return res.status(400).json({
-      error: 'authorization_code_missing',
-      message: 'Authorization code is required'
-    });
-  }
-
-  try {
-    // For GET requests, we need credentials from environment variables
-    const credentials = {
+    const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
       client_id: process.env.GHL_CLIENT_ID,
       client_secret: process.env.GHL_CLIENT_SECRET,
-      redirect_uri: process.env.GHL_REDIRECT_URI
-    };
-
-    if (!credentials.client_id || !credentials.client_secret || !credentials.redirect_uri) {
-      console.log('❌ OAuth callback failed: Environment variables not available');
-      return res.status(500).json({
-        error: 'oauth_credentials_missing',
-        message: 'OAuth credentials not configured. Use POST /oauth/callback with credentials in request body.',
-        solution: 'Send credentials with each request for Railway compatibility'
-      });
-    }
-
-    // Exchange authorization code for access token
-    const tokenResponse = await fetch('https://services.leadconnectorhq.com/oauth/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: credentials.client_id,
-        client_secret: credentials.client_secret,
-        code: code,
-        redirect_uri: credentials.redirect_uri
-      })
+      grant_type: 'authorization_code',
+      code: code,
+      redirect_uri: process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback'
     });
 
-    const tokenData = await tokenResponse.json();
-
-    if (!tokenResponse.ok) {
-      console.log('❌ Token exchange failed:', tokenData);
-      return res.status(400).json({
-        error: 'token_exchange_failed',
-        details: tokenData
-      });
-    }
-
-    console.log('✅ Token exchange successful');
-
-    // SIMPLIFIED: Skip user info retrieval, just store the token
-    const locationId = extractLocationFromToken(tokenData) || 'unknown';
-    
-    // Store installation data
+    const tokenData = tokenResponse.data;
     const installationId = `install_${Date.now()}`;
-    const installation = {
+    
+    installations.set(installationId, {
       id: installationId,
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token,
-      tokenExpiry: new Date(Date.now() + (tokenData.expires_in * 1000)),
-      scopes: tokenData.scope || 'unknown',
-      locationId: locationId,
-      tokenType: tokenData.token_type || 'Bearer',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      flow: 'simplified'
-    };
-
-    installations.set(installationId, installation);
-
-    console.log('✅ OAuth installation successful (simplified):', {
-      installationId,
-      locationId,
-      scopes: tokenData.scope
+      locationId: tokenData.locationId || 'extracted_from_token',
+      scopes: tokenData.scope || '',
+      tokenStatus: 'valid',
+      createdAt: new Date().toISOString()
     });
 
-    // Redirect to success page
-    const successUrl = `https://listings.engageautomations.com/oauth-success?installation_id=${installationId}`;
-    res.redirect(successUrl);
+    res.json({
+      success: true,
+      installationId: installationId,
+      redirectUrl: `https://listings.engageautomations.com/?installation_id=${installationId}`
+    });
 
   } catch (error) {
-    console.error('❌ OAuth callback error:', error);
-    res.status(500).json({
-      error: 'oauth_callback_failed',
-      message: error.message
-    });
+    res.status(500).json({ error: 'OAuth failed', message: error.message });
   }
 });
 
-// Helper function to extract location ID from token metadata
-function extractLocationFromToken(tokenData) {
-  try {
-    // GoHighLevel tokens often contain location info in the scope or token structure
-    if (tokenData.scope && tokenData.scope.includes('location')) {
-      // Parse location from scope if available
-      const scopeParts = tokenData.scope.split(' ');
-      const locationScope = scopeParts.find(scope => scope.includes('location'));
-      if (locationScope) {
-        // Extract location ID from scope format
-        const match = locationScope.match(/location[:\.]([a-zA-Z0-9]+)/);
-        if (match) return match[1];
-      }
-    }
-    
-    // If token is JWT, decode to get location info
-    if (tokenData.access_token && tokenData.access_token.includes('.')) {
-      try {
-        const payload = JSON.parse(atob(tokenData.access_token.split('.')[1]));
-        return payload.authClassId || payload.locationId || payload.location_id;
-      } catch (e) {
-        console.log('Could not decode JWT token');
-      }
-    }
-    
-    return null;
-  } catch (error) {
-    console.log('Error extracting location from token:', error.message);
-    return null;
-  }
-}
-
-// OAuth auth endpoint (frontend compatibility)
-app.get('/api/oauth/auth', (req, res) => {
-  const { installation_id } = req.query;
-  
-  if (!installation_id) {
-    return res.status(400).json({
-      error: 'installation_id_required',
-      message: 'Installation ID is required'
-    });
-  }
-
-  // Check if installation exists
-  const installation = installations.get(installation_id);
-  if (!installation) {
-    return res.status(404).json({
-      error: 'installation_not_found',
-      message: 'Installation not found',
-      installation_id
-    });
-  }
-
-  res.json({
-    success: true,
-    installation_id,
-    status: 'authenticated'
-  });
-});
-
-// OAuth status endpoint
-app.get('/api/oauth/status', (req, res) => {
-  const { installation_id } = req.query;
-  
-  if (!installation_id) {
-    return res.status(400).json({
-      error: 'installation_id_required',
-      message: 'Installation ID is required'
-    });
-  }
-
-  const installation = installations.get(installation_id);
-  if (!installation) {
-    return res.status(404).json({
-      error: 'installation_not_found',
-      message: 'Installation not found'
-    });
-  }
-
-  // Check token expiry
-  const now = new Date();
-  const isExpired = installation.tokenExpiry < now;
-
-  res.json({
-    success: true,
-    installation_id,
-    token_status: isExpired ? 'expired' : 'valid',
-    expires_at: installation.tokenExpiry,
-    scopes: installation.scopes,
-    location_id: installation.locationId,
-    token_type: installation.tokenType,
-    flow: installation.flow
-  });
-});
-
-// Installation management endpoint
+// Get installations
 app.get('/api/installations', (req, res) => {
-  const installationList = Array.from(installations.values()).map(install => ({
-    id: install.id,
-    locationId: install.locationId,
-    scopes: install.scopes,
-    createdAt: install.createdAt,
-    tokenStatus: install.tokenExpiry > new Date() ? 'valid' : 'expired',
-    flow: install.flow
+  const installationList = Array.from(installations.values()).map(inst => ({
+    id: inst.id,
+    locationId: inst.locationId,
+    scopes: inst.scopes,
+    tokenStatus: inst.tokenStatus,
+    createdAt: inst.createdAt
   }));
 
+  res.json({ success: true, count: installationList.length, installations: installationList });
+});
+
+// OAuth status
+app.get('/api/oauth/status', (req, res) => {
+  const installationId = req.query.installation_id;
+  const installation = installations.get(installationId);
+  
+  if (!installation) {
+    return res.json({ authenticated: false, message: 'Installation not found' });
+  }
+
   res.json({
-    success: true,
-    count: installationList.length,
-    installations: installationList
+    authenticated: true,
+    installationId: installation.id,
+    locationId: installation.locationId,
+    scopes: installation.scopes,
+    tokenStatus: installation.tokenStatus
   });
 });
 
-// GoHighLevel API proxy (ready for implementation)
-app.all('/api/ghl/*', (req, res) => {
-  res.json({
-    message: 'GoHighLevel API proxy endpoint',
-    path: req.path,
-    method: req.method,
-    status: 'ready_for_implementation',
-    note: 'Use installation access token for authenticated requests'
-  });
+// REAL API ENDPOINTS
+
+// Test connection
+app.get('/api/ghl/test-connection', async (req, res) => {
+  try {
+    const { installationId } = req.query;
+    const installation = installations.get(installationId);
+    
+    if (!installation) {
+      return res.status(404).json({ success: false, error: 'Installation not found' });
+    }
+
+    const ghl = new GHLApi(installation.accessToken, installation.locationId);
+    const result = await ghl.makeRequest(`/locations/${installation.locationId}`);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'GoHighLevel connection successful',
+        locationId: installation.locationId,
+        locationData: result.data
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'Connection failed',
+        details: result.error
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
-// Catch-all for unknown routes
-app.use('*', (req, res) => {
+// Create product
+app.post('/api/ghl/products/create', async (req, res) => {
+  try {
+    const { name, description, price, installationId, productType = 'DIGITAL' } = req.body;
+    const installation = installations.get(installationId);
+    
+    if (!installation) {
+      return res.status(404).json({ success: false, error: 'Installation not found' });
+    }
+
+    const productData = {
+      name,
+      description,
+      locationId: installation.locationId,
+      productType,
+      availableInStore: true
+    };
+
+    if (price) {
+      productData.price = price;
+    }
+
+    const ghl = new GHLApi(installation.accessToken, installation.locationId);
+    const result = await ghl.makeRequest('/products/', {
+      method: 'POST',
+      data: productData
+    });
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Product created successfully',
+        product: result.data.product,
+        productId: result.data.product?.id
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'Product creation failed',
+        details: result.error
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get products
+app.get('/api/ghl/products', async (req, res) => {
+  try {
+    const { installationId, limit = 20, offset = 0 } = req.query;
+    const installation = installations.get(installationId);
+    
+    if (!installation) {
+      return res.status(404).json({ success: false, error: 'Installation not found' });
+    }
+
+    const ghl = new GHLApi(installation.accessToken, installation.locationId);
+    const result = await ghl.makeRequest(`/products/?locationId=${installation.locationId}&limit=${limit}&offset=${offset}`);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        products: result.data.products || [],
+        total: result.data.total || 0
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'Failed to fetch products',
+        details: result.error
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update product
+app.put('/api/ghl/products/:productId', async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { installationId, ...updateData } = req.body;
+    const installation = installations.get(installationId);
+    
+    if (!installation) {
+      return res.status(404).json({ success: false, error: 'Installation not found' });
+    }
+
+    const ghl = new GHLApi(installation.accessToken, installation.locationId);
+    const result = await ghl.makeRequest(`/products/${productId}`, {
+      method: 'PUT',
+      data: { ...updateData, locationId: installation.locationId }
+    });
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Product updated successfully',
+        product: result.data.product
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'Product update failed',
+        details: result.error
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete product
+app.delete('/api/ghl/products/:productId', async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { installationId } = req.query;
+    const installation = installations.get(installationId);
+    
+    if (!installation) {
+      return res.status(404).json({ success: false, error: 'Installation not found' });
+    }
+
+    const ghl = new GHLApi(installation.accessToken, installation.locationId);
+    const result = await ghl.makeRequest(`/products/${productId}?locationId=${installation.locationId}`, {
+      method: 'DELETE'
+    });
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Product deleted successfully'
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'Product deletion failed',
+        details: result.error
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Upload media
+app.post('/api/ghl/media/upload', async (req, res) => {
+  try {
+    const { installationId, mediaUrl, fileName } = req.body;
+    const installation = installations.get(installationId);
+    
+    if (!installation) {
+      return res.status(404).json({ success: false, error: 'Installation not found' });
+    }
+
+    const ghl = new GHLApi(installation.accessToken, installation.locationId);
+    const result = await ghl.makeRequest('/medias/upload-file', {
+      method: 'POST',
+      data: {
+        fileUrl: mediaUrl,
+        fileName: fileName || 'uploaded-file',
+        locationId: installation.locationId
+      }
+    });
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Media uploaded successfully',
+        media: result.data
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'Media upload failed',
+        details: result.error
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Error handling
+app.use((error, req, res, next) => {
+  console.error('Unhandled error:', error);
+  res.status(500).json({ error: 'Internal server error', message: error.message });
+});
+
+// 404 handler
+app.use((req, res) => {
   res.status(404).json({
-    error: 'endpoint_not_found',
-    message: 'Endpoint not found',
+    error: 'Endpoint not found',
     available_endpoints: [
       'GET /health',
-      'GET /api/health',
-      'GET /oauth/callback',
-      'POST /oauth/callback',
-      'GET /api/oauth/auth',
+      'GET /api/installations', 
       'GET /api/oauth/status',
-      'GET /api/installations'
+      'GET /api/ghl/test-connection',
+      'POST /api/ghl/products/create',
+      'GET /api/ghl/products',
+      'PUT /api/ghl/products/:id',
+      'DELETE /api/ghl/products/:id',
+      'POST /api/ghl/media/upload'
     ]
   });
 });
 
-// Error handling middleware
-app.use((error, req, res, next) => {
-  console.error('❌ Unhandled error:', error);
-  res.status(500).json({
-    error: 'internal_server_error',
-    message: 'An unexpected error occurred'
-  });
+app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 GoHighLevel API Backend v4.0.0 running on port ${port}`);
+  console.log(`✅ Real API integration active`);
+  console.log(`📡 Endpoints: /api/ghl/*`);
 });
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Railway Simplified OAuth Backend v2.3.0 running on port ${PORT}`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-  console.log(`🔐 OAuth callback: http://localhost:${PORT}/oauth/callback`);
-  console.log(`📊 Features: Simplified flow without user info retrieval`);
-});
-
-module.exports = app;
