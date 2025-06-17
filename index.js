@@ -1,6 +1,6 @@
 /**
- * Railway GoHighLevel API Backend v4.0.0
- * Production-ready with real API integration
+ * Railway GoHighLevel API Backend v4.1.0
+ * Fixed for Railway deployment with proper error handling
  */
 
 const express = require('express');
@@ -10,19 +10,23 @@ const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Enhanced CORS for Railway
 app.use(cors({
   origin: [
     'https://listings.engageautomations.com',
     'https://dir.engageautomations.com',
     /\.replit\.app$/,
     /\.replit\.co$/,
-    /\.replit\.dev$/
+    /\.replit\.dev$/,
+    /\.railway\.app$/
   ],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
 app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
 
 // In-memory storage for OAuth installations
 const installations = new Map();
@@ -30,10 +34,10 @@ const installations = new Map();
 // Initialize with your current installation
 installations.set('install_1750106970265', {
   id: 'install_1750106970265',
-  accessToken: process.env.GHL_ACCESS_TOKEN || 'your_real_token_here',
+  accessToken: process.env.GHL_ACCESS_TOKEN || 'missing_token',
   locationId: 'WAvk87RmW9rBSDJHeOpH',
   scopes: 'products/prices.write products/prices.readonly products/collection.readonly medias.write medias.readonly locations.readonly contacts.readonly contacts.write products/collection.write users.readonly',
-  tokenStatus: 'valid',
+  tokenStatus: process.env.GHL_ACCESS_TOKEN ? 'valid' : 'missing',
   createdAt: new Date().toISOString()
 });
 
@@ -46,6 +50,14 @@ class GHLApi {
   }
 
   async makeRequest(endpoint, options = {}) {
+    if (!this.accessToken || this.accessToken === 'missing_token') {
+      return { 
+        success: false, 
+        error: 'GHL_ACCESS_TOKEN environment variable not set',
+        status: 401
+      };
+    }
+
     const config = {
       ...options,
       url: `${this.baseURL}${endpoint}`,
@@ -55,33 +67,65 @@ class GHLApi {
         'Version': '2021-07-28',
         'Authorization': `Bearer ${this.accessToken}`,
         ...options.headers
-      }
+      },
+      timeout: 30000
     };
 
     try {
       const response = await axios(config);
       return { success: true, data: response.data };
     } catch (error) {
+      console.error('GHL API Error:', error.message);
       return { 
         success: false, 
         error: error.response?.data || error.message,
-        status: error.response?.status 
+        status: error.response?.status || 500
       };
     }
   }
 }
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
     service: 'GoHighLevel API Backend',
-    version: '4.0.0',
-    features: ['oauth', 'products', 'media', 'real_api']
+    version: '4.1.0',
+    status: 'running',
+    features: ['oauth', 'products', 'media', 'real_api'],
+    endpoints: [
+      'GET /health',
+      'GET /api/installations',
+      'GET /api/oauth/status',
+      'GET /api/ghl/test-connection',
+      'POST /api/ghl/products/create',
+      'GET /api/ghl/products',
+      'PUT /api/ghl/products/:id',
+      'DELETE /api/ghl/products/:id',
+      'POST /api/ghl/media/upload'
+    ]
   });
 });
 
-// OAuth callback (existing)
+// Health check with detailed status
+app.get('/health', (req, res) => {
+  const hasToken = process.env.GHL_ACCESS_TOKEN && process.env.GHL_ACCESS_TOKEN !== 'missing_token';
+  
+  res.json({ 
+    status: 'healthy', 
+    service: 'GoHighLevel API Backend',
+    version: '4.1.0',
+    timestamp: new Date().toISOString(),
+    environment: {
+      port: port,
+      nodeEnv: process.env.NODE_ENV || 'production',
+      hasAccessToken: hasToken
+    },
+    features: ['oauth', 'products', 'media', 'real_api'],
+    installations: installations.size
+  });
+});
+
+// OAuth callback
 app.get('/oauth/callback', async (req, res) => {
   const { code, state } = req.query;
   
@@ -96,7 +140,7 @@ app.get('/oauth/callback', async (req, res) => {
       grant_type: 'authorization_code',
       code: code,
       redirect_uri: process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback'
-    });
+    }, { timeout: 30000 });
 
     const tokenData = tokenResponse.data;
     const installationId = `install_${Date.now()}`;
@@ -118,6 +162,7 @@ app.get('/oauth/callback', async (req, res) => {
     });
 
   } catch (error) {
+    console.error('OAuth Error:', error.message);
     res.status(500).json({ error: 'OAuth failed', message: error.message });
   }
 });
@@ -132,7 +177,11 @@ app.get('/api/installations', (req, res) => {
     createdAt: inst.createdAt
   }));
 
-  res.json({ success: true, count: installationList.length, installations: installationList });
+  res.json({ 
+    success: true, 
+    count: installationList.length, 
+    installations: installationList 
+  });
 });
 
 // OAuth status
@@ -152,8 +201,6 @@ app.get('/api/oauth/status', (req, res) => {
     tokenStatus: installation.tokenStatus
   });
 });
-
-// REAL API ENDPOINTS
 
 // Test connection
 app.get('/api/ghl/test-connection', async (req, res) => {
@@ -176,13 +223,14 @@ app.get('/api/ghl/test-connection', async (req, res) => {
         locationData: result.data
       });
     } else {
-      res.status(400).json({
+      res.status(result.status || 400).json({
         success: false,
         error: 'Connection failed',
         details: result.error
       });
     }
   } catch (error) {
+    console.error('Test connection error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -206,7 +254,7 @@ app.post('/api/ghl/products/create', async (req, res) => {
     };
 
     if (price) {
-      productData.price = price;
+      productData.price = parseFloat(price);
     }
 
     const ghl = new GHLApi(installation.accessToken, installation.locationId);
@@ -223,13 +271,14 @@ app.post('/api/ghl/products/create', async (req, res) => {
         productId: result.data.product?.id
       });
     } else {
-      res.status(400).json({
+      res.status(result.status || 400).json({
         success: false,
         error: 'Product creation failed',
         details: result.error
       });
     }
   } catch (error) {
+    console.error('Create product error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -254,13 +303,14 @@ app.get('/api/ghl/products', async (req, res) => {
         total: result.data.total || 0
       });
     } else {
-      res.status(400).json({
+      res.status(result.status || 400).json({
         success: false,
         error: 'Failed to fetch products',
         details: result.error
       });
     }
   } catch (error) {
+    console.error('Get products error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -289,13 +339,14 @@ app.put('/api/ghl/products/:productId', async (req, res) => {
         product: result.data.product
       });
     } else {
-      res.status(400).json({
+      res.status(result.status || 400).json({
         success: false,
         error: 'Product update failed',
         details: result.error
       });
     }
   } catch (error) {
+    console.error('Update product error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -322,13 +373,14 @@ app.delete('/api/ghl/products/:productId', async (req, res) => {
         message: 'Product deleted successfully'
       });
     } else {
-      res.status(400).json({
+      res.status(result.status || 400).json({
         success: false,
         error: 'Product deletion failed',
         details: result.error
       });
     }
   } catch (error) {
+    console.error('Delete product error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -360,30 +412,37 @@ app.post('/api/ghl/media/upload', async (req, res) => {
         media: result.data
       });
     } else {
-      res.status(400).json({
+      res.status(result.status || 400).json({
         success: false,
         error: 'Media upload failed',
         details: result.error
       });
     }
   } catch (error) {
+    console.error('Upload media error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Error handling
+// Global error handler
 app.use((error, req, res, next) => {
   console.error('Unhandled error:', error);
-  res.status(500).json({ error: 'Internal server error', message: error.message });
+  res.status(500).json({ 
+    error: 'Internal server error', 
+    message: process.env.NODE_ENV === 'development' ? error.message : 'Server error'
+  });
 });
 
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
     error: 'Endpoint not found',
+    path: req.path,
+    method: req.method,
     available_endpoints: [
+      'GET /',
       'GET /health',
-      'GET /api/installations', 
+      'GET /api/installations',
       'GET /api/oauth/status',
       'GET /api/ghl/test-connection',
       'POST /api/ghl/products/create',
@@ -395,8 +454,37 @@ app.use((req, res) => {
   });
 });
 
-app.listen(port, '0.0.0.0', () => {
-  console.log(`🚀 GoHighLevel API Backend v4.0.0 running on port ${port}`);
-  console.log(`✅ Real API integration active`);
-  console.log(`📡 Endpoints: /api/ghl/*`);
+// Start server with proper error handling
+const server = app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 GoHighLevel API Backend v4.1.0 running on port ${port}`);
+  console.log(`✅ Environment: ${process.env.NODE_ENV || 'production'}`);
+  console.log(`🔑 Access Token: ${process.env.GHL_ACCESS_TOKEN ? 'Set' : 'Missing'}`);
+  console.log(`📡 Health Check: /health`);
+  console.log(`🎯 Ready for Railway deployment`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Process terminated');
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    console.log('Process terminated');
+  });
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
