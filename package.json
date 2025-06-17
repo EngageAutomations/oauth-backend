@@ -1,7 +1,7 @@
 {
   "name": "railway-ghl-backend",
-  "version": "5.1.1",
-  "description": "GoHighLevel backend with simplified multi-image upload",
+  "version": "5.2.0",
+  "description": "GoHighLevel backend with OAuth callback and multi-image upload",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
