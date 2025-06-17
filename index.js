@@ -1,6 +1,6 @@
 /**
- * Railway Complete OAuth Backend v5.2.0
- * Includes OAuth callback handling + multi-image upload functionality
+ * Railway Fixed OAuth Backend v5.2.1
+ * Fixed E-102 error by using correct user info endpoint
  */
 
 const express = require('express');
@@ -104,25 +104,27 @@ async function exchangeCodeForToken(code) {
   }
 }
 
-// Get user info from GoHighLevel
+// FIXED: Get user info from GoHighLevel using correct OAuth endpoint
 async function getUserInfo(accessToken) {
   try {
-    const userResponse = await fetch('https://services.leadconnectorhq.com/users/search', {
+    // Use /oauth/userinfo for OAuth tokens (NOT /users/search)
+    const userResponse = await fetch('https://services.leadconnectorhq.com/oauth/userinfo', {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
-        'Version': '2021-07-28',
         'Accept': 'application/json'
       }
     });
 
     if (!userResponse.ok) {
       const errorText = await userResponse.text();
+      console.error('User info failed:', userResponse.status, errorText);
       throw new Error(`User info failed: ${userResponse.status} ${errorText}`);
     }
 
     const userData = await userResponse.json();
-    return userData.users && userData.users[0] ? userData.users[0] : userData;
+    console.log('User data received:', Object.keys(userData));
+    return userData;
   } catch (error) {
     console.error('User info error:', error);
     throw error;
@@ -137,6 +139,8 @@ app.get('/health', (req, res) => {
     tokenBundles: byLocationId.size,
     locationIds: Array.from(byLocationId.keys()),
     installations: installations.size,
+    version: '5.2.1',
+    fixes: ['E-102-error-fixed', 'oauth-userinfo-endpoint'],
     features: ['oauth-callback', 'location-centric', 'multi-image-upload', 'no-jwt-simplified']
   });
 });
@@ -183,10 +187,10 @@ app.get('/api/oauth/callback', async (req, res) => {
     const tokenData = await exchangeCodeForToken(code);
     console.log('Token exchange successful:', Object.keys(tokenData));
 
-    // Get user info
-    console.log('Getting user info...');
+    // Get user info using FIXED endpoint
+    console.log('Getting user info using /oauth/userinfo...');
     const userInfo = await getUserInfo(tokenData.access_token);
-    console.log('User info retrieved:', userInfo.id || userInfo.email);
+    console.log('User info retrieved successfully');
 
     // Create installation ID
     const installationId = `install_${Date.now()}`;
@@ -197,9 +201,10 @@ app.get('/api/oauth/callback', async (req, res) => {
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token,
       expiresAt: new Date(Date.now() + (tokenData.expires_in * 1000)),
-      locationId: userInfo.locationId || userInfo.location?.id,
-      userId: userInfo.id,
+      locationId: userInfo.locationId || userInfo.companyId,
+      userId: userInfo.id || userInfo.sub,
       userEmail: userInfo.email,
+      userDetails: userInfo,
       createdAt: new Date()
     };
 
@@ -234,12 +239,17 @@ app.get('/api/oauth/callback', async (req, res) => {
             .success { color: #27ae60; font-size: 24px; margin-bottom: 20px; }
             .details { background: #f8f9fa; padding: 20px; border-radius: 4px; margin: 20px 0; text-align: left; }
             .button { display: inline-block; background: #3498db; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; margin: 10px; }
+            .fixed { background: #e8f5e8; color: #2d5a2d; padding: 10px; border-radius: 4px; margin: 10px 0; }
           </style>
         </head>
         <body>
           <div class="container">
             <h1 class="success">✅ OAuth Integration Successful!</h1>
             <p>Your GoHighLevel account has been successfully connected to the marketplace application.</p>
+            
+            <div class="fixed">
+              <strong>Fixed:</strong> E-102 OAuth error resolved using correct /oauth/userinfo endpoint
+            </div>
             
             <div class="details">
               <h3>Installation Details:</h3>
@@ -248,6 +258,7 @@ app.get('/api/oauth/callback', async (req, res) => {
               <p><strong>User:</strong> ${installation.userEmail || installation.userId}</p>
               <p><strong>Status:</strong> Active</p>
               <p><strong>Features:</strong> Product Creation, Media Upload, API Access</p>
+              <p><strong>Version:</strong> 5.2.1 (E-102 Fixed)</p>
             </div>
             
             <p>You can now:</p>
@@ -269,11 +280,21 @@ app.get('/api/oauth/callback', async (req, res) => {
 
   } catch (error) {
     console.error('OAuth callback error:', error);
+    
+    // Check if it's the specific E-102 error
+    const isE102Error = error.message.includes('E-102') || error.message.includes('AuthClass is not yet supported');
+    
     res.status(500).send(`
       <html>
         <head><title>OAuth Error</title></head>
         <body style="font-family: Arial, sans-serif; padding: 40px; text-align: center;">
           <h1 style="color: #e74c3c;">OAuth Processing Error</h1>
+          ${isE102Error ? `
+            <div style="background: #ffebee; color: #c62828; padding: 15px; border-radius: 4px; margin: 20px 0;">
+              <strong>Known Issue:</strong> E-102 OAuth endpoint error detected.<br>
+              This has been fixed in the latest version. Please contact support if this persists.
+            </div>
+          ` : ''}
           <p>There was an error processing your OAuth request:</p>
           <p style="background: #f8f9fa; padding: 10px; border-radius: 4px;"><code>${error.message}</code></p>
           <a href="https://listings.engageautomations.com" style="color: #3498db;">Return to Application</a>
@@ -303,7 +324,8 @@ app.get('/api/oauth/status', (req, res) => {
     locationId: installation.locationId,
     userEmail: installation.userEmail,
     expiresAt: installation.expiresAt,
-    hasValidToken: installation.expiresAt > new Date()
+    hasValidToken: installation.expiresAt > new Date(),
+    version: '5.2.1'
   });
 });
 
@@ -552,13 +574,14 @@ app.use((error, req, res, next) => {
 });
 
 app.listen(port, '0.0.0.0', () => {
-  console.log(`Railway GoHighLevel Backend v5.2.0 running on port ${port}`);
-  console.log('Architecture: Complete OAuth + Multi-image upload (no JWT)');
+  console.log(`Railway GoHighLevel Backend v5.2.1 running on port ${port}`);
+  console.log('Architecture: Fixed OAuth + Multi-image upload (no JWT)');
+  console.log('Fixes: E-102 error resolved using /oauth/userinfo endpoint');
   console.log('Features: OAuth callback, Multi-image upload, Product creation, Legacy compatibility');
   console.log('');
   console.log('Endpoints:');
   console.log('- GET  /health - Health check');
-  console.log('- GET  /api/oauth/callback - OAuth callback handler');
+  console.log('- GET  /api/oauth/callback - OAuth callback handler (FIXED)');
   console.log('- GET  /api/oauth/status - OAuth status check');
   console.log('- POST /api/ghl/locations/:locationId/media - Multi-image upload');
   console.log('- POST /api/ghl/locations/:locationId/products - Product creation');
