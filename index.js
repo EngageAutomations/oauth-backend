@@ -26,7 +26,7 @@ installations.set('install_1750106970265', {
 app.get('/', (req, res) => {
   res.json({
     service: 'GoHighLevel API Backend',
-    version: '1.1.0',
+    version: '1.2.0',
     status: 'running',
     timestamp: new Date().toISOString()
   });
@@ -207,13 +207,21 @@ app.get('/oauth/callback', async (req, res) => {
   }
 
   try {
-    const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
+    // Create URL-encoded form data for GoHighLevel OAuth token exchange
+    const formData = new URLSearchParams({
       client_id: process.env.GHL_CLIENT_ID,
       client_secret: process.env.GHL_CLIENT_SECRET,
       grant_type: 'authorization_code',
       code: code,
       redirect_uri: process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback'
-    }, { timeout: 15000 });
+    });
+    
+    const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', formData, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      timeout: 15000
+    });
 
     const tokenData = tokenResponse.data;
     const installationId = `install_${Date.now()}`;
@@ -250,13 +258,21 @@ app.get('/api/oauth/callback', async (req, res) => {
   try {
     console.log('Processing OAuth callback with code:', code);
     
-    const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
+    // Create URL-encoded form data for GoHighLevel OAuth token exchange
+    const formData = new URLSearchParams({
       client_id: process.env.GHL_CLIENT_ID,
       client_secret: process.env.GHL_CLIENT_SECRET,
       grant_type: 'authorization_code',
       code: code,
       redirect_uri: process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/api/oauth/callback'
-    }, { timeout: 15000 });
+    });
+    
+    const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', formData, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      timeout: 15000
+    });
 
     const tokenData = tokenResponse.data;
     const installationId = `install_${Date.now()}`;
@@ -349,7 +365,7 @@ app.post('/api/ghl/test-product', async (req, res) => {
 
 // Start server
 app.listen(port, '0.0.0.0', () => {
-  console.log(`GoHighLevel API Backend v1.1.0 running on port ${port}`);
+  console.log(`GoHighLevel API Backend v1.2.0 running on port ${port}`);
   console.log(`Health check: /health`);
   console.log(`OAuth callback: /api/oauth/callback`);
   console.log(`Access token: ${process.env.GHL_ACCESS_TOKEN ? 'Present' : 'Missing - Will be captured via OAuth'}`);
