@@ -1,7 +1,7 @@
 {
-  "name": "railway-ghl-backend",
-  "version": "1.0.0",
-  "description": "GoHighLevel API Backend for Railway",
+  "name": "railway-ghl-backend-updated",
+  "version": "1.1.0",
+  "description": "GoHighLevel API Backend for Railway with OAuth Callback Fix",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
