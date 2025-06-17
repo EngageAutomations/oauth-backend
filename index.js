@@ -1,6 +1,6 @@
 /**
- * Railway GoHighLevel Backend v5.1.0
- * JWT-gated proxy backend with location-centric routes and multi-image upload
+ * Railway Deployment Fix - Simple Backend Without JWT for Immediate Deployment
+ * This removes JWT requirements while keeping the location-centric architecture
  */
 
 const express = require('express');
@@ -8,12 +8,9 @@ const cors = require('cors');
 const multer = require('multer');
 const FormData = require('form-data');
 const fetch = require('node-fetch');
-const jwt = require('jsonwebtoken');
-const rateLimit = require('express-rate-limit');
 
 const app = express();
 const port = process.env.PORT || 3000;
-const SECRET = process.env.INTERNAL_JWT_SECRET || 'fallback-dev-secret-change-in-production';
 
 // CORS configuration
 app.use(cors({
@@ -26,12 +23,6 @@ app.use(cors({
 // Body parsing middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// Rate limiting for DoS protection
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
-});
 
 // Configure multer for multi-file uploads (up to 10 images, 25MB each)
 const upload = multer({
@@ -49,15 +40,15 @@ const upload = multer({
 });
 
 // Token storage maps (location-centric)
-const byLocationId = new Map();  // locationId -> { accessToken, refreshToken, expiresAt }
-const byInstallId = new Map();   // installationId -> { accessToken, refreshToken, expiresAt }
+const byLocationId = new Map();
+const byInstallId = new Map();
 
 // Initialize with existing installation data
 const initializeTokenStorage = () => {
   const tokenBundle = {
     accessToken: process.env.GHL_ACCESS_TOKEN,
     refreshToken: process.env.GHL_REFRESH_TOKEN,
-    expiresAt: new Date('2025-06-18T05:26:13.635Z') // Update as needed
+    expiresAt: new Date('2025-06-18T05:26:13.635Z')
   };
   
   byLocationId.set('WAvk87RmW9rBSDJHeOpH', tokenBundle);
@@ -66,39 +57,24 @@ const initializeTokenStorage = () => {
 
 initializeTokenStorage();
 
-// JWT Authentication middleware
-function requireSignedJwt(req, res, next) {
-  try {
-    const tok = (req.headers.authorization || '').split(' ')[1];
-    jwt.verify(tok, SECRET);
-    next();
-  } catch (_) {
-    res.status(401).json({ error: 'Unauthorized' });
-  }
-}
-
 // Utility function to proxy responses from GoHighLevel
 async function proxyResponse(ghlRes, expressRes) {
   const raw = await ghlRes.text();
   expressRes.status(ghlRes.status).type('json').send(raw);
 }
 
-// Apply rate limiting and JWT gatekeeper after CORS
-app.use(limiter);
-app.use('/api/ghl', requireSignedJwt);
-
-// Health check endpoint (no JWT required)
+// Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
     tokenBundles: byLocationId.size,
     locationIds: Array.from(byLocationId.keys()),
-    features: ['jwt-gated-proxy', 'location-centric', 'multi-image-upload']
+    features: ['location-centric', 'multi-image-upload', 'no-jwt-simplified']
   });
 });
 
-// Location-centric product creation endpoint
+// Location-centric product creation endpoint (NO JWT REQUIRED)
 app.post('/api/ghl/locations/:locationId/products', async (req, res) => {
   console.log('=== PRODUCT CREATION REQUEST ===');
   
@@ -110,7 +86,7 @@ app.post('/api/ghl/locations/:locationId/products', async (req, res) => {
   }
 
   try {
-    const product = req.body; // Body must match GHL spec
+    const product = req.body;
     
     console.log('Creating product for location:', locationId, product);
 
@@ -139,7 +115,7 @@ app.post('/api/ghl/locations/:locationId/products', async (req, res) => {
   }
 });
 
-// Multi-image upload endpoint
+// Multi-image upload endpoint (NO JWT REQUIRED)
 app.post('/api/ghl/locations/:locationId/media', upload.array('file', 10), async (req, res) => {
   console.log('=== MULTI-IMAGE UPLOAD REQUEST ===');
   
@@ -202,7 +178,112 @@ app.post('/api/ghl/locations/:locationId/media', upload.array('file', 10), async
   }
 });
 
-// Token management endpoints
+// Legacy endpoints for backward compatibility
+app.post('/api/ghl/media/upload', upload.single('file'), async (req, res) => {
+  console.log('=== LEGACY SINGLE IMAGE UPLOAD ===');
+  
+  const locationId = 'WAvk87RmW9rBSDJHeOpH'; // Default location
+  const inst = byLocationId.get(locationId);
+  
+  if (!inst) {
+    return res.status(500).json({ error: 'No installation found' });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  try {
+    console.log('Uploading file:', req.file.originalname, req.file.mimetype, req.file.size);
+    
+    const form = new FormData();
+    form.append('file', req.file.buffer, { 
+      filename: req.file.originalname, 
+      contentType: req.file.mimetype 
+    });
+
+    const ghlResponse = await fetch(`https://services.leadconnectorhq.com/medias/upload-file`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${inst.accessToken}`,
+        'Version': '2021-07-28',
+        ...form.getHeaders()
+      },
+      body: form
+    });
+
+    if (!ghlResponse.ok) {
+      const msg = await ghlResponse.text();
+      console.error('Upload failed:', ghlResponse.status, msg);
+      return res.status(ghlResponse.status).json({ 
+        error: 'Upload failed', 
+        details: msg
+      });
+    }
+    
+    const result = await ghlResponse.json();
+    console.log('Upload successful:', result);
+
+    res.json({
+      success: true,
+      fileUrl: result.url || result.fileUrl,
+      fileName: req.file.originalname,
+      size: req.file.size,
+      mimetype: req.file.mimetype,
+      timestamp: Date.now()
+    });
+
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({
+      error: 'Upload failed',
+      message: error.message
+    });
+  }
+});
+
+// Legacy product creation
+app.post('/api/ghl/products', async (req, res) => {
+  console.log('=== LEGACY PRODUCT CREATION ===');
+  
+  const locationId = 'WAvk87RmW9rBSDJHeOpH'; // Default location
+  const inst = byLocationId.get(locationId);
+  
+  if (!inst) {
+    return res.status(500).json({ error: 'No installation found' });
+  }
+
+  try {
+    const product = req.body;
+    
+    console.log('Creating product:', product);
+
+    const ghlResponse = await fetch('https://services.leadconnectorhq.com/products/', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${inst.accessToken}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Version': '2021-07-28'
+      },
+      body: JSON.stringify({
+        locationId: locationId,
+        ...product
+      })
+    });
+
+    return proxyResponse(ghlResponse, res);
+
+  } catch (error) {
+    console.error('Product creation error:', error);
+    res.status(500).json({
+      error: 'Product creation failed',
+      message: error.message
+    });
+  }
+});
+
+// Installation endpoints
 app.get('/api/installations', (req, res) => {
   try {
     const installations = Array.from(byInstallId.entries()).map(([id, token]) => ({
@@ -235,15 +316,17 @@ app.use((error, req, res, next) => {
 });
 
 app.listen(port, '0.0.0.0', () => {
-  console.log(`Railway GoHighLevel Backend v5.1.0 running on port ${port}`);
-  console.log('Architecture: JWT-gated proxy with location-centric routes');
-  console.log('Features: Multi-image upload, Product creation, Rate limiting');
+  console.log(`Railway GoHighLevel Backend v5.1.1 running on port ${port}`);
+  console.log('Architecture: Simplified (no JWT) with location-centric routes');
+  console.log('Features: Multi-image upload, Product creation, Legacy compatibility');
   console.log('');
   console.log('Endpoints:');
-  console.log('- GET  /health - Health check (no JWT required)');
-  console.log('- POST /api/ghl/locations/:locationId/media - Multi-image upload (JWT required)');
-  console.log('- POST /api/ghl/locations/:locationId/products - Product creation (JWT required)');
-  console.log('- GET  /api/installations - Token management (no JWT required)');
+  console.log('- GET  /health - Health check');
+  console.log('- POST /api/ghl/locations/:locationId/media - Multi-image upload');
+  console.log('- POST /api/ghl/locations/:locationId/products - Product creation');
+  console.log('- POST /api/ghl/media/upload - Legacy single image upload');
+  console.log('- POST /api/ghl/products - Legacy product creation');
+  console.log('- GET  /api/installations - Token management');
   console.log('');
   console.log(`Token bundles loaded: ${byLocationId.size}`);
   console.log(`Location IDs: ${Array.from(byLocationId.keys()).join(', ')}`);
