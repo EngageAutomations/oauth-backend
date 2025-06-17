@@ -2,9 +2,9 @@
   "name": "railway-ghl-backend",
   "version": "5.1.1",
   "description": "GoHighLevel backend with simplified multi-image upload",
-  "main": "railway-deployment-fix.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node railway-deployment-fix.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
