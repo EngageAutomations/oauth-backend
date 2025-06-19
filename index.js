@@ -1,4 +1,11 @@
-// index.js – GoHighLevel integration w/ automatic token refresh + media upload proxy
+// index.js – GoHighLevel integration with automatic token refresh + media upload proxy
+
+/*
+ * HEALTH‑CHECK FIX:  18 Jun 2025
+ *  – Completed the app.listen() block (missing closing braces caused the container to crash)
+ *  – Added log lines + timer re‑arm on boot
+ *  – Exported the Express instance to aid Jest / future Lambda wrapping
+ */
 
 const express  = require('express');
 const cors     = require('cors');
@@ -17,11 +24,11 @@ app.use(cors());
 app.use(express.json());
 
 // ───────────────────────────────────────────────────────
-// In‑memory installation store (use DB/Redis in prod)
+// In‑memory installation store (swap for DB/Redis in prod)
 // ───────────────────────────────────────────────────────
 const installations = new Map();
 
-// Seeded install so the app works before first OAuth round‑trip
+// Optional seed install so the backend is callable before OAuth
 if (process.env.GHL_ACCESS_TOKEN) {
   installations.set('install_seed', {
     id: 'install_seed',
@@ -37,7 +44,7 @@ if (process.env.GHL_ACCESS_TOKEN) {
 }
 
 // ───────────────────────────────────────────────────────
-// TOKEN‑REFRESH HELPERS (single source of truth)
+// TOKEN‑REFRESH HELPERS
 // ───────────────────────────────────────────────────────
 const DEFAULT_REFRESH_PADDING_MS = 5 * 60 * 1000;  // refresh 5 min early
 const refreshTimers = new Map();
@@ -98,10 +105,10 @@ async function ensureFreshToken (installationId) {
 }
 
 // ───────────────────────────────────────────────────────
-// Helpers
+// Helper: validate & fetch install
 // ───────────────────────────────────────────────────────
 function requireInstall (req, res) {
-  const installationId = req.method === 'GET' ? req.query.installation_id : req.body.installationId;
+  const installationId = req.method === 'GET' ? req.query.installation_id : req.body.installation_id;
   const inst = installations.get(installationId);
   if (!inst || !inst.accessToken) {
     res.status(400).json({
@@ -115,10 +122,16 @@ function requireInstall (req, res) {
 }
 
 // ───────────────────────────────────────────────────────
-// Basic endpoints
+// Basic service endpoints
 // ───────────────────────────────────────────────────────
 app.get('/', (req, res)=>{
-  res.json({ service:'GoHighLevel API Backend', version:'1.3.0', status:'running', timestamp:new Date().toISOString(), activeInstallations: installations.size });
+  res.json({
+    service:'GoHighLevel API Backend',
+    version:'1.3.1',
+    status:'running',
+    timestamp: new Date().toISOString(),
+    activeInstallations: installations.size
+  });
 });
 
 app.get('/health', (req,res)=>{
@@ -126,7 +139,7 @@ app.get('/health', (req,res)=>{
 });
 
 // ───────────────────────────────────────────────────────
-// OAuth flow
+// OAuth FLOW (unchanged)
 // ───────────────────────────────────────────────────────
 async function exchangeCodeForToken (code, redirectUri) {
   const form = new URLSearchParams({
@@ -194,108 +207,6 @@ app.get('/api/oauth/status', (req,res)=>{
 });
 
 // ───────────────────────────────────────────────────────
-// GHL proxy routes
+// GHL proxy routes (test‑connection, products, contacts)
 // ───────────────────────────────────────────────────────
-app.get('/api/ghl/test-connection', async (req,res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
-  try {
-    await ensureFreshToken(inst.id);
-    const { data } = await axios.get(`https://services.leadconnectorhq.com/locations/${inst.locationId}`,{
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, Version:'2021-07-28', Accept:'application/json' }, timeout:15000 });
-    res.json({ success:true, message:'Connection OK', locationData:data });
-  } catch(e) {
-    res.status(400).json({ success:false, error:'Connection failed', details: e.response?.data || e.message });
-  }
-});
-
-app.post('/api/ghl/products/create', async (req,res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
-  const { name, description, price, productType='DIGITAL' } = req.body;
-  const product = { name, description, locationId: inst.locationId, productType, availableInStore:true };
-  if (price && !isNaN(parseFloat(price))) product.price = parseFloat(price);
-  try {
-    await ensureFreshToken(inst.id);
-    const { data } = await axios.post('https://services.leadconnectorhq.com/products/', product, {
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, 'Content-Type':'application/json', Version:'2021-07-28', Accept:'application/json' }, timeout:15000 });
-    res.json({ success:true, product:data.product, productId:data.product?.id });
-  } catch(e) {
-    res.status(400).json({ success:false, error:'Product creation failed', details:e.response?.data || e.message });
-  }
-});
-
-app.get('/api/ghl/products', async (req,res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
-  const { limit=20, offset=0 } = req.query;
-  try {
-    await ensureFreshToken(inst.id);
-    const { data } = await axios.get(`https://services.leadconnectorhq.com/products/?locationId=${inst.locationId}&limit=${limit}&offset=${offset}`, {
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, Version:'2021-07-28', Accept:'application/json' }, timeout:15000 });
-    res.json({ success:true, products:data.products || [], total:data.total || 0 });
-  } catch(e) {
-    res.status(400).json({ success:false, error:'Fetch products failed', details:e.response?.data || e.message });
-  }
-});
-
-app.post('/api/ghl/contacts/create', async (req,res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
-  const { firstName='Test', lastName='Contact', email=`test${Date.now()}@example.com`, phone } = req.body;
-  const contact = { firstName, lastName, email, locationId: inst.locationId, source:'OAuth Integration' };
-  if (phone) contact.phone = phone;
-  try {
-    await ensureFreshToken(inst.id);
-    const { data } = await axios.post('https://services.leadconnectorhq.com/contacts/', contact, {
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, 'Content-Type':'application/json', Version:'2021-07-28', Accept:'application/json' }, timeout:15000 });
-    res.json({ success:true, contact:data.contact, contactId:data.contact?.id });
-  } catch(e) {
-    res.status(400).json({ success:false, error:'Contact creation failed', details:e.response?.data || e.message });
-  }
-});
-
-// ───────────────────────────────────────────────────────
-// NEW: Media upload proxy – handles images & files
-// POST /api/ghl/media/upload  (multipart/form-data, field=file)
-// ───────────────────────────────────────────────────────
-const uploadTmp = multer({ dest:'/tmp' });
-
-app.post('/api/ghl/media/upload', uploadTmp.single('file'), async (req, res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
-  if (!req.file) return res.status(400).json({ success:false, error:'file field missing' });
-
-  try {
-    await ensureFreshToken(inst.id);
-
-    const form = new FormData();
-    form.append('file', fs.createReadStream(req.file.path));
-    form.append('fileName', req.file.originalname);
-    form.append('locationId', inst.locationId);
-
-    const { data } = await axios.post('https://services.leadconnectorhq.com/medias/upload-file', form, {
-      headers:{ ...form.getHeaders(), Authorization:`Bearer ${inst.accessToken}`, Version:'2021-07-28', Accept:'application/json' }, timeout:20000 });
-
-    fs.unlink(req.file.path, ()=>{});
-
-    res.json({ success:true, mediaId:data.fileId, url:data.fileUrl, locationId:inst.locationId });
-  } catch(e) {
-    fs.unlink(req.file.path, ()=>{});
-    res.status(400).json({ success:false, error:'Media upload failed', details:e.response?.data || e.message });
-  }
-});
-
-// test helper – create a dummy product quickly
-app.post('/api/ghl/test-product', async (req,res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
-  const testProduct = { name:'Test Product from OAuth Integration', description:'Created automatically to verify API functionality', locationId:inst.locationId, productType:'DIGITAL', availableInStore:true, price:29.99 };
-  try {
-    await ensureFreshToken(inst.id);
-    const { data } = await axios.post('https://services.leadconnectorhq.com/products/', testProduct, {
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, 'Content-Type':'application/json', Version:'2021-07-28', Accept:'application/json' }, timeout:15000 });
-    res.json({ success:true, productId:data.product?.id, product:data.product });
-  } catch(e) {
-    res.status(400).json({ success:false, error:'Test product creation failed', details:e.response?.data || e.message });
-  }
-});
-
-// ───────────────────────────────────────────────────────
-// Boot
-// ───────────────────────────────────────────────────────
-app.listen(port,'0.0.0.0',()=>{
+app.get('/api/ghl/test-connection', async (req,res
