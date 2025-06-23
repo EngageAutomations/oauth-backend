@@ -1,73 +1,62 @@
-// index.js – Fully‑featured Railway GHL Proxy  (v1.5.2)
-// -----------------------------------------------------------------------------
-// ✅  Location‑centric API – /locations/:locationId/products & /media
-// ✅  JWT gatekeeper (+ /api/auth/token)
-// ✅  Automatic access‑token refresh with scheduled pre‑emptive refresh
-// ✅  OAuth callback – stores new installs (in‑memory for now)
-// ✅  Multer multi‑image upload  (≤10 files, 25 MB each)
-// ✅  Legacy routes return 410 Gone
-// ✅  Immediate app.listen() so Replit proxy maps PORT quickly
-// -----------------------------------------------------------------------------
-//  Requirements (package.json):
-//    "express", "cors", "multer", "form-data", "axios", "jsonwebtoken", "node-cron"
-// -----------------------------------------------------------------------------
-
+// index.js – Railway GoHighLevel Proxy (v1.5.4)
+// ---------------------------------------------------------------------------
+// • Location‑centric API → /locations/:locationId/products & /media
+// • JWT gatekeeper (+ /api/auth/token)
+// • Automatic access‑token refresh (+ hourly cron safety‑net)
+// • OAuth callback (stores installs in memory for now)
+// • Multer multi‑image upload (≤ 10 files, 25 MB each)
+// • Legacy “body‑based” routes return 410 Gone
+// • Fast app.listen() so Replit proxy maps PORT instantly
+// ---------------------------------------------------------------------------
+// Runtime deps: express cors multer form-data axios jsonwebtoken node-cron
 /* eslint-disable no-console */
 
-// ── 1. Imports & env ----------------------------------------------------------
-const express   = require('express');
-const cors      = require('cors');
-const multer    = require('multer');
-const FormData  = require('form-data');
-const axios     = require('axios');
-const jwt       = require('jsonwebtoken');
-const cron      = require('node-cron');
-const path      = require('path');
+// ── 1. Imports & env ---------------------------------------------------------
+const express  = require('express');
+const cors     = require('cors');
+const multer   = require('multer');
+const FormData = require('form-data');
+const axios    = require('axios');
+const jwt      = require('jsonwebtoken');
+const cron     = require('node-cron');
+const path     = require('path');
 require('dotenv').config();
 
-const PORT = process.env.PORT || 5000;
-const HOST = '0.0.0.0';
-const SECRET = process.env.INTERNAL_JWT_SECRET || 'super‑secret‑dev‑key';
-const REFRESH_BUFFER_MS = 60_000; // refresh 60 s before expiry
+const PORT   = process.env.PORT  || 5000;
+const HOST   = process.env.HOST  || '0.0.0.0';
+const SECRET = process.env.INTERNAL_JWT_SECRET || 'dev‑secret‑do‑not‑use‑prod';
+const REFRESH_BUFFER_MS = 60_000;          // refresh 60 s before expiry
 
 const app = express();
 
-// ── 2. Middleware: CORS, parsers, static, health -----------------------------
+// ── 2. Basic middleware & health --------------------------------------------
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'))); // serve React build if present
 app.get('/health', (_, res) => res.send('OK'));
 
-// ── 3. In‑memory installation store & helpers --------------------------------
-/**
- * installation = {
- *   id, locationId, accessToken, refreshToken, expiresAt, orgName?, userEmail?,
- *   refreshing?: Promise<string>
- * }
- */
+// ── 3. In‑memory installations map ------------------------------------------
+/** @type {Map<string, Installation>} */
 const installations = new Map();
 
-// seed install for smoke tests
 if (process.env.GHL_ACCESS_TOKEN && process.env.GHL_LOCATION_ID) {
-  installations.set('install_seed', {
-    id:           'install_seed',
+  installations.set('seed', {
+    id:           'seed',
     locationId:   process.env.GHL_LOCATION_ID,
     accessToken:  process.env.GHL_ACCESS_TOKEN,
     refreshToken: process.env.GHL_REFRESH_TOKEN || null,
-    expiresAt:    Date.now() + 8.64e7,
-    orgName:      'Seed Install',
+    expiresAt:    Date.now() + 8.64e7, // 24 h
+    orgName:      'Seed Install',
   });
 }
 
-function byLocation(locationId) {
-  return Array.from(installations.values()).find(i => i.locationId === locationId);
-}
+const byLocation = loc => Array.from(installations.values()).find(i => i.locationId === loc);
 
-// ── 4. OAuth callback – stores/updates token bundle --------------------------
+// ── 4. OAuth callback --------------------------------------------------------
 app.get('/api/oauth/callback', async (req, res) => {
   const { code } = req.query;
-  if (!code) return res.status(400).send('Missing code');
+  if (!code) return res.status(400).send('Missing code');
 
   try {
     const { data } = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
@@ -76,10 +65,9 @@ app.get('/api/oauth/callback', async (req, res) => {
       grant_type:    'authorization_code',
       code,
     });
-
-    const instId = data.installationId || `inst_${data.locationId}`;
-    installations.set(instId, {
-      id:           instId,
+    const id = data.installationId || `inst_${data.locationId}`;
+    installations.set(id, {
+      id,
       locationId:   data.locationId,
       accessToken:  data.access_token,
       refreshToken: data.refresh_token,
@@ -87,37 +75,33 @@ app.get('/api/oauth/callback', async (req, res) => {
       orgName:      data.orgName,
       userEmail:    data.userEmail,
     });
-    console.log(`[oauth] stored installation ${data.locationId}`);
+    console.info('[oauth] stored install', data.locationId);
     res.redirect('/oauth-success.html');
   } catch (err) {
     console.error('[oauth] error', err.response?.data || err.message);
-    res.status(500).send('OAuth flow failed');
+    res.status(500).send('OAuth failed');
   }
 });
 
-// ── 5. JWT gatekeeper & token‑mint route ------------------------------------
+// ── 5. JWT gatekeeper + token‑mint route ------------------------------------
 function requireJWT(req, res, next) {
   try {
     const raw = (req.headers.authorization || '').split(' ')[1];
     jwt.verify(raw, SECRET);
-    next();
-  } catch (e) {
-    res.status(401).json({ error: 'JWT invalid or missing' });
+    return next();
+  } catch {
+    return res.status(401).json({ error: 'JWT invalid or missing' });
   }
 }
 
 app.post('/api/auth/token', (req, res) => {
-  const token = jwt.sign(
-    { sub: 'replit-agent', role: req.body?.role || 'merchant' },
-    SECRET,
-    { expiresIn: '8h' },
-  );
+  const token = jwt.sign({ sub: 'replit-agent', role: req.body?.role || 'merchant' }, SECRET, { expiresIn: '8h' });
   res.json({ jwt: token });
 });
 
-// ── 6. Token‑refresh helpers --------------------------------------------------
+// ── 6. Token refresh helpers -------------------------------------------------
 async function refreshAccessToken(inst) {
-  console.log('[refresh] refreshing token for', inst.locationId);
+  console.log('[refresh] token for', inst.locationId);
   const { data } = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
     client_id:     process.env.GHL_CLIENT_ID,
     client_secret: process.env.GHL_CLIENT_SECRET,
@@ -139,19 +123,16 @@ async function ensureFresh(inst) {
   return inst.refreshing;
 }
 
-// scheduled global refresh safety‑net (runs every hour)
-cron.schedule('0 * * * *', async () => {
-  for (const inst of installations.values()) {
-    if (inst.expiresAt < Date.now() + 10 * 60 * 1000) { // < 10 min
-      try { await ensureFresh(inst); } catch (e) { console.error('[cron refresh]', e.message); }
-    }
-  }
+cron.schedule('0 * * * *', () => {
+  installations.forEach(inst => {
+    if (inst.expiresAt < Date.now() + 10 * 60 * 1000) ensureFresh(inst).catch(e => console.error('[cron]', e.message));
+  });
 });
 
-// ── 7. Multer setup for image upload ----------------------------------------
+// ── 7. Multer for multi‑image upload ----------------------------------------
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
-// ── 8. JWT‑protected API routes ---------------------------------------------
+// ── 8. API router (JWT‑protected) -------------------------------------------
 const router = express.Router();
 router.use(requireJWT);
 app.use('/api/ghl', router);
@@ -160,10 +141,10 @@ app.use('/api/ghl', router);
 router.post('/locations/:locationId/media', upload.array('file', 10), async (req, res) => {
   const inst = byLocation(req.params.locationId);
   if (!inst) return res.status(404).json({ error: 'locationId unknown' });
-
   await ensureFresh(inst);
-  const uploaded = [];
+
   try {
+    const out = [];
     for (const f of req.files) {
       const fd = new FormData();
       fd.append('file', f.buffer, { filename: f.originalname, contentType: f.mimetype });
@@ -171,9 +152,9 @@ router.post('/locations/:locationId/media', upload.array('file', 10), async (req
         headers: { Authorization: `Bearer ${inst.accessToken}`, Version: '2021-07-28', ...fd.getHeaders() },
         timeout: 20000,
       });
-      uploaded.push(data);
+      out.push(data);
     }
-    res.json({ uploaded });
+    res.json({ uploaded: out });
   } catch (err) {
     console.error('[media] error', err.response?.data || err.message);
     res.status(err.response?.status || 500).json({ error: 'media upload failed', details: err.response?.data });
@@ -203,5 +184,8 @@ router.post('/locations/:locationId/products', async (req, res) => {
   }
 });
 
-// ── 9. Legacy routes return 410 ---------------------------------------------
-app.all(['/api/ghl/products', '/api/ghl/products/*'], (_, res) => res
+// ── 9. Deprecated legacy endpoints → 410 Gone --------------------------------
+['/api/ghl/products', '/api/ghl/products/*', '/api/ghl/media', '/api/ghl/media/*'].forEach(p =>
+  app.all(p, (_, res) => res.status(410).json({ error: 'Deprecated – use /api/ghl/locations/:locationId/...' })));
+
+// ── 10. Start server ---------------------------------------------------------
