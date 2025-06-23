@@ -1,264 +1,206 @@
-// index.js – GoHighLevel proxy with automatic token‑refresh + media upload
-// 18 Jun 2025 – full file, syntax‑checked
+// updated-index.js – Complete Railway GHL Proxy (v1.5.0)
+// ------------------------------------------------------------
+// * Location‑centric API (products + media)
+// * JWT gatekeeper & token refresh
+// * OAuth callback + installation storage
+// * Multer multi‑image upload (≤ 10 × 25 MB)
+// * Legacy routes return 410 (deprecated)
+// * Immediate listen to satisfy Replit probe
+// ------------------------------------------------------------
 
-const express  = require('express');
-const cors     = require('cors');
-const axios    = require('axios');
-const multer   = require('multer');
-const FormData = require('form-data');
-const fs       = require('fs');
+/* eslint-disable no-console */
+
+// ── 1. Imports & env ─────────────────────────────────────────
+const express     = require('express');
+const cors        = require('cors');
+const multer      = require('multer');
+const FormData    = require('form-data');
+const axios       = require('axios');
+const jwt         = require('jsonwebtoken');
+const path        = require('path');
+require('dotenv').config();
 
 const app  = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
+const HOST = '0.0.0.0';
 
-// ───────────────────────────────────────────────────────
-// Middleware
-// ───────────────────────────────────────────────────────
-app.use(cors());
-app.use(express.json());
+// ── 2. Middleware: CORS, parsers, static ────────────────────
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.static(path.join(__dirname, 'public'))); // React build if present
+app.get('/health', (_, res) => res.send('OK'));
 
-// ───────────────────────────────────────────────────────
-// In‑memory install store (swap for DB/Redis in prod)
-// ───────────────────────────────────────────────────────
+// ── 3. Installation store (in‑mem + helper funcs) ───────────
+/**
+ * installation schema ≈ {
+ *   id, locationId, accessToken, refreshToken, expiresAt,
+ *   orgName?, userEmail?
+ * }
+ */
 const installations = new Map();
 
-if (process.env.GHL_ACCESS_TOKEN) {
+// seed from env so we can smoke‑test without OAuth first
+if (process.env.GHL_ACCESS_TOKEN && process.env.GHL_LOCATION_ID) {
   installations.set('install_seed', {
-    id: 'install_seed',
+    id:          'install_seed',
+    locationId:   process.env.GHL_LOCATION_ID,
     accessToken:  process.env.GHL_ACCESS_TOKEN,
     refreshToken: process.env.GHL_REFRESH_TOKEN || null,
-    expiresIn:    86399,
-    expiresAt:    Date.now() + 86399 * 1000,
-    locationId:   process.env.GHL_LOCATION_ID || 'WAvk87RmW9rBSDJHeOpH',
-    scopes:       process.env.GHL_SCOPES || 'medias.write medias.readonly',
-    tokenStatus:  'valid',
-    createdAt:    new Date().toISOString()
+    expiresAt:    Date.now() + 8.64e7, // 24 h
+    orgName:     'Seed Install',
   });
 }
 
-// ───────────────────────────────────────────────────────
-// TOKEN LIFECYCLE HELPERS
-// ───────────────────────────────────────────────────────
-const PADDING_MS  = 5 * 60 * 1000;        // refresh 5 min early
-const refreshers  = new Map();            // installId → timer id
+function getByLocation(id) {
+  return Array.from(installations.values()).find(i => i.locationId === id);
+}
 
-async function refreshAccessToken (id) {
-  const inst = installations.get(id);
-  if (!inst || !inst.refreshToken) return;
-
+// ── 4. OAuth callback (stores new tokens) ───────────────────
+app.get('/api/oauth/callback', async (req, res) => {
   try {
-    const body = new URLSearchParams({
+    const { code } = req.query;
+    if (!code) return res.status(400).send('Missing code');
+
+    const body = {
       client_id:     process.env.GHL_CLIENT_ID,
       client_secret: process.env.GHL_CLIENT_SECRET,
-      grant_type:    'refresh_token',
-      refresh_token: inst.refreshToken
+      grant_type:    'authorization_code',
+      code
+    };
+
+    const { data } = await axios.post('https://services.leadconnectorhq.com/oauth/token', body);
+    const instId = data.installationId || `inst_${data.locationId}`;
+
+    installations.set(instId, {
+      id:           instId,
+      locationId:   data.locationId,
+      accessToken:  data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt:    Date.now() + data.expires_in * 1000,
+      orgName:      data.orgName,
+      userEmail:    data.userEmail,
     });
-
-    const { data } = await axios.post(
-      'https://services.leadconnectorhq.com/oauth/token',
-      body,
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
-    );
-
-    inst.accessToken  = data.access_token;
-    inst.refreshToken = data.refresh_token || inst.refreshToken;
-    inst.expiresIn    = data.expires_in;
-    inst.expiresAt    = Date.now() + data.expires_in * 1000;
-    inst.tokenStatus  = 'valid';
-
-    scheduleRefresh(id);
-    console.log(`[REFRESH] ${id} → ${(data.expires_in/3600).toFixed(1)} h`);
+    console.log('[oauth] stored new installation', data.locationId);
+    res.redirect('/oauth-success.html');
   } catch (err) {
-    console.error(`[REFRESH‑FAIL] ${id}`, err.response?.data || err.message);
-    inst.tokenStatus = 'invalid';
+    console.error('[oauth] callback error', err.response?.data || err.message);
+    res.status(500).send('OAuth failed');
   }
-}
-
-function scheduleRefresh (id) {
-  clearTimeout(refreshers.get(id));
-  const inst = installations.get(id);
-  if (!inst || !inst.expiresAt) return;
-  const delay = Math.max(inst.expiresAt - Date.now() - PADDING_MS, 0);
-  const t = setTimeout(() => refreshAccessToken(id), delay);
-  refreshers.set(id, t);
-}
-
-async function ensureFreshToken (id) {
-  const inst = installations.get(id);
-  if (!inst) throw new Error('Unknown installation');
-  if (!inst.expiresAt || inst.expiresAt - Date.now() < PADDING_MS) {
-    await refreshAccessToken(id);
-  }
-  if (inst.tokenStatus !== 'valid') throw new Error('Token invalid');
-}
-
-// ───────────────────────────────────────────────────────
-// Helper: validate installation on each request
-// ───────────────────────────────────────────────────────
-function requireInstall (req, res) {
-  const installationId = req.method === 'GET' ? req.query.installation_id : req.body.installation_id;
-  const inst = installations.get(installationId);
-  if (!inst || !inst.accessToken) {
-    res.status(400).json({ success:false, error:`Installation not found: ${installationId}` });
-    return null;
-  }
-  return inst;
-}
-
-// ───────────────────────────────────────────────────────
-// BASIC ROUTES
-// ───────────────────────────────────────────────────────
-app.get('/', (req, res)=>{
-  res.json({ service:'GHL proxy', version:'1.4.0', ts:new Date().toISOString(), installs:installations.size });
-});
-app.get('/health', (req,res)=>{
-  res.json({ status:'ok', ts:new Date().toISOString() });
 });
 
-// ───────────────────────────────────────────────────────
-// OAUTH ENDPOINTS
-// ───────────────────────────────────────────────────────
-async function exchangeCode (code, redirectUri) {
-  const body = new URLSearchParams({
+// ── 5. JWT helper & auth route ──────────────────────────────
+const SECRET = process.env.INTERNAL_JWT_SECRET || 'dev-secret';
+function requireJWT(req, res, next) {
+  try {
+    const raw = (req.headers.authorization || '').split(' ')[1];
+    jwt.verify(raw, SECRET);
+    next();
+  } catch (_) {
+    res.status(401).json({ error: 'JWT invalid or missing' });
+  }
+}
+
+app.post('/api/auth/token', (req, res) => {
+  const token = jwt.sign(
+    { sub: 'replit-agent', role: req.body?.role || 'merchant' },
+    SECRET,
+    { expiresIn: '8h' }
+  );
+  res.json({ jwt: token });
+});
+
+// ── 6. Access‑token refresh logic ───────────────────────────
+async function refreshAccessToken(inst) {
+  const body = {
     client_id:     process.env.GHL_CLIENT_ID,
     client_secret: process.env.GHL_CLIENT_SECRET,
-    grant_type:    'authorization_code',
-    code,
-    redirect_uri:  redirectUri
+    grant_type:    'refresh_token',
+    refresh_token: inst.refreshToken,
+  };
+  const { data } = await axios.post('https://services.leadconnectorhq.com/oauth/token', body);
+  Object.assign(inst, {
+    accessToken:  data.access_token,
+    refreshToken: data.refresh_token ?? inst.refreshToken,
+    expiresAt:    Date.now() + data.expires_in * 1000,
   });
-  const { data } = await axios.post('https://services.leadconnectorhq.com/oauth/token', body, { headers:{'Content-Type':'application/x-www-form-urlencoded'}, timeout:15000 });
-  return data;
+  console.info('[refresh] success for', inst.locationId);
+  return inst.accessToken;
 }
 
-function storeInstall (tokenData) {
-  const id = `install_${Date.now()}`;
-  installations.set(id, {
-    id,
-    accessToken:  tokenData.access_token,
-    refreshToken: tokenData.refresh_token,
-    expiresIn:    tokenData.expires_in,
-    expiresAt:    Date.now() + tokenData.expires_in * 1000,
-    locationId:   tokenData.locationId || 'WAvk87RmW9rBSDJHeOpH',
-    scopes:       tokenData.scope || '',
-    tokenStatus:  'valid',
-    createdAt:    new Date().toISOString()
-  });
-  scheduleRefresh(id);
-  return id;
+async function ensureFreshToken(inst) {
+  const buffer = 60_000; // 60 s head‑room
+  if (inst.expiresAt > Date.now() + buffer) return inst.accessToken;
+  if (inst.refreshing) return inst.refreshing;
+  inst.refreshing = refreshAccessToken(inst).finally(() => delete inst.refreshing);
+  return inst.refreshing;
 }
 
-app.get(['/oauth/callback','/api/oauth/callback'], async (req,res)=>{
-  const { code } = req.query;
-  if (!code) return res.status(400).json({ error:'code required' });
-  try {
-    const redirectUri = req.path.startsWith('/api')
-      ? (process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/api/oauth/callback')
-      : (process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback');
+// ── 7. Multer for multipart image upload ────────────────────
+const uploadMem = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
-    const tokenData = await exchangeCode(code, redirectUri);
-    const id = storeInstall(tokenData);
-    const url = `https://listings.engageautomations.com/?installation_id=${id}&welcome=true`;
-    res.redirect(url);
-  } catch (e) {
-    console.error('OAuth error', e.response?.data || e.message);
-    res.status(500).json({ error:'OAuth failed', details:e.response?.data || e.message });
+// ── 8. API router (JWT protected) ───────────────────────────
+const router = express.Router();
+router.use(requireJWT);
+app.use('/api/ghl', router);
+
+// 8.1 Multi-image upload
+router.post('/locations/:locationId/media', uploadMem.array('file', 10), async (req, res) => {
+  const inst = getByLocation(req.params.locationId);
+  if (!inst) return res.status(404).json({ error: 'unknown locationId' });
+
+  await ensureFreshToken(inst);
+  const results = [];
+  try {
+    for (const f of req.files) {
+      const fd = new FormData();
+      fd.append('file', f.buffer, { filename: f.originalname, contentType: f.mimetype });
+      const { data } = await axios.post('https://services.leadconnectorhq.com/medias/upload-file', fd, {
+        headers: { Authorization: `Bearer ${inst.accessToken}`, Version: '2021-07-28', ...fd.getHeaders() },
+        timeout: 20000,
+      });
+      results.push(data);
+    }
+    res.json({ uploaded: results });
+  } catch (err) {
+    console.error('[media] error', err.response?.data || err.message);
+    res.status(err.response?.status || 500).json({ error: 'upload failed', details: err.response?.data });
   }
 });
 
-app.get('/api/oauth/status', (req,res)=>{
-  const inst = installations.get(req.query.installation_id);
-  if (!inst) return res.json({ authenticated:false });
-  res.json({ authenticated:true, tokenStatus:inst.tokenStatus, locationId:inst.locationId });
-});
+// 8.2 Product create
+router.post('/locations/:locationId/products', async (req, res) => {
+  const inst = getByLocation(req.params.locationId);
+  if (!inst) return res.status(404).json({ error: 'unknown locationId' });
+  await ensureFreshToken(inst);
 
-// ───────────────────────────────────────────────────────
-// GHL PROXY ROUTES
-// ───────────────────────────────────────────────────────
-app.get('/api/ghl/test-connection', async (req,res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
   try {
-    await ensureFreshToken(inst.id);
-    const { data } = await axios.get(`https://services.leadconnectorhq.com/locations/${inst.locationId}`, {
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, Version:'2021-07-28', Accept:'application/json' }, timeout:15000 });
-    res.json({ success:true, location:data });
-  } catch(e) {
-    res.status(400).json({ success:false, error:e.response?.data || e.message });
+    const { data, status } = await axios.post('https://services.leadconnectorhq.com/products/', req.body, {
+      headers: {
+        Authorization: `Bearer ${inst.accessToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Version: '2021-07-28',
+      },
+      timeout: 15000,
+    });
+    res.status(status).send(data);
+  } catch (err) {
+    console.error('[product] error', err.response?.data || err.message);
+    res.status(err.response?.status || 500).json({ error: 'product create failed', details: err.response?.data });
   }
 });
 
-app.get('/api/ghl/products', async (req,res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
-  const { limit=20, offset=0 } = req.query;
-  try {
-    await ensureFreshToken(inst.id);
-    const { data } = await axios.get(`https://services.leadconnectorhq.com/products/?locationId=${inst.locationId}&limit=${limit}&offset=${offset}`, {
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, Version:'2021-07-28', Accept:'application/json' }, timeout:15000 });
-    res.json({ success:true, products:data.products || [], total:data.total || 0 });
-  } catch(e) {
-    res.status(400).json({ success:false, error:e.response?.data || e.message });
-  }
-});
+// ── 9. Legacy endpoints → 410 Gone ──────────────────────────
+app.all('/api/ghl/products/*', (_, res) => res.status(410).json({ error: 'Route deprecated — use /locations/:locationId/products' }));
+app.all('/api/ghl/media/*',    (_, res) => res.status(410).json({ error: 'Route deprecated — use /locations/:locationId/media' }));
 
-app.post('/api/ghl/products/create', async (req,res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
-  const { name, description, price, productType='DIGITAL' } = req.body;
-  const product = { name, description, locationId:inst.locationId, productType, availableInStore:true };
-  if (price && !isNaN(parseFloat(price))) product.price = parseFloat(price);
-  try {
-    await ensureFreshToken(inst.id);
-    const { data } = await axios.post('https://services.leadconnectorhq.com/products/', product, {
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, 'Content-Type':'application/json', Version:'2021-07-28', Accept:'application/json' }, timeout:15000 });
-    res.json({ success:true, product:data.product });
-  } catch(e) {
-    res.status(400).json({ success:false, error:e.response?.data || e.message });
-  }
-});
+// ── 10. Start server fast so Replit proxy stays mapped ─────
+app.listen(PORT, HOST, () => console.log(`🟢 Express bound http://${HOST}:${PORT}`));
 
-app.post('/api/ghl/contacts/create', async (req,res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
-  const { firstName='Test', lastName='Contact', email=`test${Date.now()}@example.com`, phone } = req.body;
-  const contact = { firstName, lastName, email, locationId:inst.locationId, source:'OAuth Integration' };
-  if (phone) contact.phone = phone;
-  try {
-    await ensureFreshToken(inst.id);
-    const { data } = await axios.post('https://services.leadconnectorhq.com/contacts/', contact, {
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, 'Content-Type':'application/json', Version:'2021-07-28', Accept:'application/json' }, timeout:15000 });
-    res.json({ success:true, contact:data.contact });
-  } catch(e) {
-    res.status(400).json({ success:false, error:e.response?.data || e.message });
-  }
-});
-
-// ──────────────────────────────────────────────
-// MEDIA UPLOAD  – multipart field "file"
-// ──────────────────────────────────────────────
-const uploadTmp = multer({ dest:'/tmp' });
-
-app.post('/api/ghl/media/upload', uploadTmp.single('file'), async (req,res)=>{
-  const inst = requireInstall(req,res); if (!inst) return;
-  if (!req.file) return res.status(400).json({ success:false, error:'file field missing' });
-  try {
-    await ensureFreshToken(inst.id);
-    const form = new FormData();
-    form.append('file', fs.createReadStream(req.file.path));
-    form.append('fileName', req.file.originalname);
-    form.append('locationId', inst.locationId);
-    const { data } = await axios.post('https://services.leadconnectorhq.com/medias/upload-file', form, {
-      headers:{ ...form.getHeaders(), Authorization:`Bearer ${inst.accessToken}`, Version:'2021-07-28', Accept:'application/json' }, timeout:20000 });
-    fs.unlink(req.file.path, ()=>{});
-    res.json({ success:true, mediaId:data.fileId, url:data.fileUrl });
-  } catch(e) {
-    fs.unlink(req.file.path, ()=>{});
-    res.status(400).json({ success:false, error:e.response?.data || e.message });
-  }
-});
-
-// ──────────────────────────────────────────────
-// START SERVER & RE‑ARM REFRESH TIMERS
-// ──────────────────────────────────────────────
-app.listen(port,'0.0.0.0',()=>{
-  console.log(`GHL proxy listening on ${port}`);
-  for (const id of installations.keys()) scheduleRefresh(id);
-});
-
-module.exports = app;
+// heavy bootstrap async but non-blocking
+(async () => {
+  console.log('Bootstrapping (DB, schedulers)…');
+  // await connectDB(); // if you have DB
+  console.log('✅ GHL proxy ready');
+})();
