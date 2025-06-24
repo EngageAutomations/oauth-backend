@@ -1,10 +1,10 @@
 {
   "name": "gohighlevel-oauth-backend",
-  "version": "1.5.4",
-  "description": "Railway proxy for GoHighLevel – location‑centric API + JWT + token refresh",
+  "version": "1.5.5",
+  "description": "Railway proxy for GoHighLevel – location‑centric API + JWT + automatic token refresh",
   "main": "index.js",
   "scripts": {
-    "start": "node -r dotenv/config index.js",
+    "start": "node --enable-source-maps -r dotenv/config index.js",
     "dev": "nodemon -r dotenv/config index.js"
   },
   "dependencies": {
