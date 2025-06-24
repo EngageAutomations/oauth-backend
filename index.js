@@ -18,6 +18,12 @@ const path     = require('path');
 const app      = express();
 const PORT     = process.env.PORT || 3000;
 
+// ── Startup sanity log ------------------------------------------------------
+console.log('Config check:', {
+  CLIENT_ID: process.env.GHL_CLIENT_ID ? '[set]' : undefined,
+  REDIRECT : process.env.GHL_REDIRECT_URI || '/api/oauth/callback'
+});
+
 // ── 1. Middleware & static ---------------------------------------------------
 app.use(cors());
 app.use(express.json({ limit:'50mb' }));
@@ -149,56 +155,3 @@ app.get(['/oauth/callback','/api/oauth/callback'], async (req,res)=>{
 });
 
 app.get('/api/oauth/status', (req,res)=>{
-  const inst = installations.get(req.query.installation_id);
-  if (!inst) return res.json({ authenticated:false });
-  res.json({ authenticated:true, tokenStatus:inst.tokenStatus, locationId:inst.locationId });
-});
-
-// ── 7. Legacy API routes (still supported) -----------------------------------
-// ... keep your existing /api/ghl/products, /contacts, /media/upload etc ...
-
-// ── 8. NEW LOCATION‑CENTRIC ROUTES ------------------------------------------
-const memUpload = multer({ storage: multer.memoryStorage(), limits:{ fileSize:25*1024*1024 } });
-
-app.post('/api/ghl/locations/:locationId/media', memUpload.array('file', 10), async (req,res)=>{
-  const { locationId } = req.params;
-  const inst = Array.from(installations.values()).find(i => i.locationId === locationId);
-  if (!inst) return res.status(404).json({ success:false, error:`Unknown locationId ${locationId}` });
-  try {
-    await ensureFreshToken(inst.id);
-    const results = [];
-    for (const f of req.files) {
-      const form = new FormData();
-      form.append('file', f.buffer, { filename:f.originalname, contentType:f.mimetype });
-      const { data } = await axios.post('https://services.leadconnectorhq.com/medias/upload-file', form, {
-        headers:{ ...form.getHeaders(), Authorization:`Bearer ${inst.accessToken}`, Version:'2021-07-28' }, timeout:20000 });
-      results.push(data);
-    }
-    res.json({ success:true, uploaded:results });
-  } catch(e) {
-    res.status(e.response?.status||500).json({ success:false, error:e.response?.data||e.message });
-  }
-});
-
-app.post('/api/ghl/locations/:locationId/products', async (req,res)=>{
-  const { locationId } = req.params;
-  const inst = Array.from(installations.values()).find(i => i.locationId === locationId);
-  if (!inst) return res.status(404).json({ success:false, error:`Unknown locationId ${locationId}` });
-  try {
-    await ensureFreshToken(inst.id);
-    const body = { ...req.body, locationId }; // stateform sends proper fields
-    const { data } = await axios.post('https://services.leadconnectorhq.com/products/', body, {
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, 'Content-Type':'application/json', Version:'2021-07-28' }, timeout:15000 });
-    res.json({ success:true, product:data.product||data });
-  } catch(e) {
-    res.status(e.response?.status||500).json({ success:false, error:e.response?.data||e.message });
-  }
-});
-
-// ── 9. Start server & arm refresh timers ------------------------------------
-app.listen(PORT,'0.0.0.0', ()=>{
-  console.log(`GHL proxy listening on ${PORT}`);
-  for (const id of installations.keys()) scheduleRefresh(id);
-});
-
-module.exports = app;
