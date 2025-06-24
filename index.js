@@ -1,42 +1,55 @@
-// index.js – Railway GoHighLevel Proxy (v1.5.4)
+// index.js – Railway GoHighLevel Proxy (v1.6.0)
 // ---------------------------------------------------------------------------
-// • Location‑centric API → /locations/:locationId/products & /media
-// • JWT gatekeeper (+ /api/auth/token)
-// • Automatic access‑token refresh (+ hourly cron safety‑net)
-// • OAuth callback (stores installs in memory for now)
-// • Multer multi‑image upload (≤ 10 files, 25 MB each)
-// • Legacy “body‑based” routes return 410 Gone
-// • Fast app.listen() so Replit proxy maps PORT instantly
+// • Location‑centric API  →  /locations/:locationId/products & /media
+// • JWT gatekeeper        →  /api/auth/token
+// • Env‑driven config     →  fails fast if critical vars are missing
+// • Automatic token‑refresh (+ hourly cron safety‑net)
+// • OAuth callback        →  stores installs (in‑memory)
+// • Multer multi‑image upload (≤10 × 25 MB)
+// • Legacy routes         →  410 Gone
+// • Fast app.listen()     →  health‑checks pass within 1 s
 // ---------------------------------------------------------------------------
-// Runtime deps: express cors multer form-data axios jsonwebtoken node-cron
+// Runtime deps: express cors multer form-data axios jsonwebtoken node-cron dotenv
 /* eslint-disable no-console */
 
 // ── 1. Imports & env ---------------------------------------------------------
-const express  = require('express');
-const cors     = require('cors');
-const multer   = require('multer');
-const FormData = require('form-data');
-const axios    = require('axios');
-const jwt      = require('jsonwebtoken');
-const cron     = require('node-cron');
-const path     = require('path');
-require('dotenv').config();
+import 'dotenv/config';                         // load .env locally, no‑op in prod
+import express  from 'express';
+import cors     from 'cors';
+import multer   from 'multer';
+import FormData from 'form-data';
+import axios    from 'axios';
+import jwt      from 'jsonwebtoken';
+import cron     from 'node-cron';
+import path     from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT   = process.env.PORT  || 5000;
 const HOST   = process.env.HOST  || '0.0.0.0';
-const SECRET = process.env.INTERNAL_JWT_SECRET || 'dev‑secret‑do‑not‑use‑prod';
-const REFRESH_BUFFER_MS = 60_000;          // refresh 60 s before expiry
+const SECRET = process.env.INTERNAL_JWT_SECRET;
+const REFRESH_BUFFER_MS = 60_000; // refresh 60 s before expiry
+
+//   Fail fast when any critical env var is missing
+['GHL_CLIENT_ID', 'GHL_CLIENT_SECRET', 'INTERNAL_JWT_SECRET'].forEach(key => {
+  if (!process.env[key]) {
+    console.error(`❌  Missing env var: ${key}`);
+    process.exit(1);
+  }
+});
 
 const app = express();
 
-// ── 2. Basic middleware & health --------------------------------------------
+// ── 2. Middleware & health‑probe --------------------------------------------
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-app.use(express.static(path.join(__dirname, 'public'))); // serve React build if present
+app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (_, res) => res.send('OK'));
 
-// ── 3. In‑memory installations map ------------------------------------------
+// ── 3. Installation store ----------------------------------------------------
+/** @typedef { import('./types').Installation } Installation */
 /** @type {Map<string, Installation>} */
 const installations = new Map();
 
@@ -46,7 +59,7 @@ if (process.env.GHL_ACCESS_TOKEN && process.env.GHL_LOCATION_ID) {
     locationId:   process.env.GHL_LOCATION_ID,
     accessToken:  process.env.GHL_ACCESS_TOKEN,
     refreshToken: process.env.GHL_REFRESH_TOKEN || null,
-    expiresAt:    Date.now() + 8.64e7, // 24 h
+    expiresAt:    Date.now() + 8.64e7,
     orgName:      'Seed Install',
   });
 }
@@ -83,14 +96,14 @@ app.get('/api/oauth/callback', async (req, res) => {
   }
 });
 
-// ── 5. JWT gatekeeper + token‑mint route ------------------------------------
+// ── 5. JWT gatekeeper & token mint ------------------------------------------
 function requireJWT(req, res, next) {
   try {
     const raw = (req.headers.authorization || '').split(' ')[1];
     jwt.verify(raw, SECRET);
-    return next();
+    next();
   } catch {
-    return res.status(401).json({ error: 'JWT invalid or missing' });
+    res.status(401).json({ error: 'JWT invalid or missing' });
   }
 }
 
@@ -99,9 +112,8 @@ app.post('/api/auth/token', (req, res) => {
   res.json({ jwt: token });
 });
 
-// ── 6. Token refresh helpers -------------------------------------------------
+// ── 6. Token‑refresh helpers -------------------------------------------------
 async function refreshAccessToken(inst) {
-  console.log('[refresh] token for', inst.locationId);
   const { data } = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
     client_id:     process.env.GHL_CLIENT_ID,
     client_secret: process.env.GHL_CLIENT_SECRET,
@@ -123,13 +135,11 @@ async function ensureFresh(inst) {
   return inst.refreshing;
 }
 
-cron.schedule('0 * * * *', () => {
-  installations.forEach(inst => {
-    if (inst.expiresAt < Date.now() + 10 * 60 * 1000) ensureFresh(inst).catch(e => console.error('[cron]', e.message));
-  });
-});
+cron.schedule('0 * * * *', () => installations.forEach(inst => {
+  if (inst.expiresAt < Date.now() + 10 * 60 * 1000) ensureFresh(inst).catch(e => console.error('[cron]', e.message));
+}));
 
-// ── 7. Multer for multi‑image upload ----------------------------------------
+// ── 7. Multer setup ----------------------------------------------------------
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
 // ── 8. API router (JWT‑protected) -------------------------------------------
@@ -144,7 +154,7 @@ router.post('/locations/:locationId/media', upload.array('file', 10), async (req
   await ensureFresh(inst);
 
   try {
-    const out = [];
+    const uploaded = [];
     for (const f of req.files) {
       const fd = new FormData();
       fd.append('file', f.buffer, { filename: f.originalname, contentType: f.mimetype });
@@ -152,9 +162,9 @@ router.post('/locations/:locationId/media', upload.array('file', 10), async (req
         headers: { Authorization: `Bearer ${inst.accessToken}`, Version: '2021-07-28', ...fd.getHeaders() },
         timeout: 20000,
       });
-      out.push(data);
+      uploaded.push(data);
     }
-    res.json({ uploaded: out });
+    res.json({ uploaded });
   } catch (err) {
     console.error('[media] error', err.response?.data || err.message);
     res.status(err.response?.status || 500).json({ error: 'media upload failed', details: err.response?.data });
@@ -179,13 +189,4 @@ router.post('/locations/:locationId/products', async (req, res) => {
     });
     res.status(status).send(data);
   } catch (err) {
-    console.error('[product] error', err.response?.data || err.message);
-    res.status(err.response?.status || 500).json({ error: 'product create failed', details: err.response?.data });
-  }
-});
-
-// ── 9. Deprecated legacy endpoints → 410 Gone --------------------------------
-['/api/ghl/products', '/api/ghl/products/*', '/api/ghl/media', '/api/ghl/media/*'].forEach(p =>
-  app.all(p, (_, res) => res.status(410).json({ error: 'Deprecated – use /api/ghl/locations/:locationId/...' })));
-
-// ── 10. Start server ---------------------------------------------------------
+    console.error('[product] error', err.response?.
