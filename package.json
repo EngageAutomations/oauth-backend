@@ -1,7 +1,7 @@
 {
-  "name": "ghl-proxy-modular",
-  "version": "1.5.0",
-  "description": "Modular GoHighLevel OAuth proxy with location-centric API routing",
+  "name": "ghl-proxy-modular-fixed",
+  "version": "1.6.1",
+  "description": "Modular GoHighLevel OAuth proxy with embedded credentials",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -17,5 +17,14 @@
   },
   "engines": {
     "node": ">=16.0.0"
-  }
+  },
+  "keywords": [
+    "gohighlevel",
+    "oauth",
+    "fixed",
+    "railway",
+    "proxy"
+  ],
+  "author": "Engage Automations",
+  "license": "MIT"
 }
