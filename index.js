@@ -1,11 +1,5 @@
-// index.js – GoHighLevel proxy with token‑refresh + *location‑centric* API (v1.4.4)
+// index.js – GoHighLevel proxy with token‑refresh + *location‑centric* API (v1.4.6)
 // ---------------------------------------------------------------------------
-// ✅ CommonJS build (no "type":"module" needed)
-// ✅ Keeps original refresh, media, product & contact endpoints
-// ✅ Adds location‑centric routes (media + products)
-// ✅ **Restores full OAuth flow** so `/api/oauth/callback` works again
-// ---------------------------------------------------------------------------
-
 /* eslint-disable no-console */
 
 const express  = require('express');
@@ -15,8 +9,9 @@ const multer   = require('multer');
 const FormData = require('form-data');
 const fs       = require('fs');
 const path     = require('path');
-const app      = express();
-const PORT     = process.env.PORT || 3000;
+
+const app  = express();
+const PORT = process.env.PORT || 3000;
 
 // ── Startup sanity log ------------------------------------------------------
 console.log('Config check:', {
@@ -47,8 +42,8 @@ if (process.env.GHL_ACCESS_TOKEN) {
 }
 
 // ── 3. Token lifecycle helpers ----------------------------------------------
-const PADDING_MS = 5 * 60 * 1000; // refresh 5 min before expiry
-const refreshTimers = new Map();  // installId → timerId
+const PADDING_MS   = 5 * 60 * 1000; // refresh 5 min early
+const refreshTimers = new Map();    // installId → timerId
 
 async function refreshAccessToken(id) {
   const inst = installations.get(id);
@@ -72,7 +67,7 @@ async function refreshAccessToken(id) {
     scheduleRefresh(id);
     console.log(`[REFRESH] ${id} ok → ${(data.expires_in/3600).toFixed(1)}h`);
   } catch(e) {
-    console.error(`[REFRESH‑FAIL] ${id}`, e.response?.data || e.message);
+    console.error(`[REFRESH-FAIL] ${id}`, e.response?.data || e.message);
     inst.tokenStatus = 'invalid';
   }
 }
@@ -105,7 +100,7 @@ function getInstallFromReq(req, res) {
 }
 
 // ── 5. Basic routes ----------------------------------------------------------
-app.get('/', (_,res)=>res.json({ service:'GHL proxy', version:'1.4.4', installs:installations.size, ts:Date.now() }));
+app.get('/', (_,res)=>res.json({ service:'GHL proxy', version:'1.4.6', installs:installations.size, ts:Date.now() }));
 app.get('/health',(_,res)=>res.json({ ok:true, ts:Date.now() }));
 
 // ── 6. FULL OAUTH FLOW -------------------------------------------------------
@@ -155,3 +150,26 @@ app.get(['/oauth/callback','/api/oauth/callback'], async (req,res)=>{
 });
 
 app.get('/api/oauth/status', (req,res)=>{
+  const inst = installations.get(req.query.installation_id);
+  if (!inst) return res.json({ authenticated:false });
+  res.json({ authenticated:true, tokenStatus:inst.tokenStatus, locationId:inst.locationId });
+});
+
+// ── 7. Legacy routes remain unchanged (products/create, media/upload, etc.) --
+
+// ── 8. LOCATION-CENTRIC ROUTES ---------------------------------------------
+const memUpload = multer({ storage: multer.memoryStorage(), limits:{ fileSize:25*1024*1024 } });
+app.post('/api/ghl/locations/:locationId/media', memUpload.array('file', 10), async (req,res)=>{
+  const { locationId } = req.params;
+  const inst = Array.from(installations.values()).find(i => i.locationId === locationId);
+  if (!inst) return res.status(404).json({ success:false, error:`Unknown locationId ${locationId}` });
+  try {
+    await ensureFreshToken(inst.id);
+    const results = [];
+    for (const f of req.files) {
+      const form = new FormData();
+      form.append('file', f.buffer, { filename:f.originalname, contentType:f.mimetype });
+      const { data } = await axios.post('https://services.leadconnectorhq.com/medias/upload-file', form, {
+        headers:{ ...form.getHeaders(), Authorization:`Bearer ${inst.accessToken}`, Version:'2021-07-28' }, timeout:20000 });
+      results.push(data);
+    }
