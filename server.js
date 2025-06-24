@@ -7,6 +7,9 @@ const multer = require('multer');
 const FormData = require('form-data');
 const fetch = require('node-fetch');
 
+// Deployment timestamp: 2025-06-24T23:04:39.273Z
+// Version: 2.0.0-complete-force-deploy
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -137,9 +140,10 @@ async function makeGHLRequest(endpoint, options = {}) {
 app.get('/', (req, res) => {
   res.json({
     service: 'GoHighLevel Product API',
-    version: '2.0.0-complete',
+    version: '2.0.0-complete-deployed',
     installs: installations.size,
     authenticated: tokensByLocationId.size,
+    deployedAt: '2025-06-24T23:04:39.273Z',
     features: {
       products: 'Create, read, update, delete products',
       images: 'Multi-image upload and management',
@@ -170,7 +174,8 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ 
     ok: true, 
-    service: 'ghl-products',
+    service: 'ghl-products-complete',
+    version: '2.0.0-complete-deployed',
     installations: installations.size,
     authenticated: tokensByLocationId.size,
     ts: Date.now() 
@@ -402,6 +407,7 @@ app.get('/installations', (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`GoHighLevel Product API Server running on port ${PORT}`);
+  console.log('Version: 2.0.0-complete-deployed');
   console.log('Features: Product CRUD, Multi-image upload, Media management');
   console.log('OAuth installations:', tokensByLocationId.size);
 });
