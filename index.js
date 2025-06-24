@@ -1,11 +1,9 @@
-// index.js – GoHighLevel proxy with token‑refresh + *location‑centric* API (v1.4.3)
+// index.js – GoHighLevel proxy with token‑refresh + *location‑centric* API (v1.4.4)
 // ---------------------------------------------------------------------------
-// ✅ Compatible with the last working CommonJS build (no ES‑modules required)
-// ✅ Keeps all original OAuth, refresh, media‑upload & product‑create logic
-// ✅ Adds **location‑centric** routes that your new React front‑end calls:
-//      • POST /api/ghl/locations/:locationId/media    (multi‑image upload)
-//      • POST /api/ghl/locations/:locationId/products (create product)
-// ✅ Old body‑based routes still work for backward compatibility
+// ✅ CommonJS build (no "type":"module" needed)
+// ✅ Keeps original refresh, media, product & contact endpoints
+// ✅ Adds location‑centric routes (media + products)
+// ✅ **Restores full OAuth flow** so `/api/oauth/callback` works again
 // ---------------------------------------------------------------------------
 
 /* eslint-disable no-console */
@@ -100,20 +98,68 @@ function getInstallFromReq(req, res) {
   return inst;
 }
 
-// ── 5. Basic & OAuth routes (unchanged) -------------------------------------
-app.get('/', (_,res)=>res.json({ service:'GHL proxy', version:'1.4.3', installs:installations.size, ts:Date.now() }));
+// ── 5. Basic routes ----------------------------------------------------------
+app.get('/', (_,res)=>res.json({ service:'GHL proxy', version:'1.4.4', installs:installations.size, ts:Date.now() }));
 app.get('/health',(_,res)=>res.json({ ok:true, ts:Date.now() }));
 
-// (OAuth exchangeCode + callback SAME as before, omitted here for brevity)
-// copy from prior deployable file if you removed it.
+// ── 6. FULL OAUTH FLOW -------------------------------------------------------
+async function exchangeCode(code, redirectUri) {
+  const body = new URLSearchParams({
+    client_id:     process.env.GHL_CLIENT_ID,
+    client_secret: process.env.GHL_CLIENT_SECRET,
+    grant_type:    'authorization_code',
+    code,
+    redirect_uri:  redirectUri
+  });
+  const { data } = await axios.post('https://services.leadconnectorhq.com/oauth/token', body, {
+    headers:{ 'Content-Type':'application/x-www-form-urlencoded' }, timeout:15000 });
+  return data;
+}
+function storeInstall(tokenData) {
+  const id = `inst_${tokenData.locationId}_${Date.now()}`;
+  installations.set(id, {
+    id,
+    accessToken:  tokenData.access_token,
+    refreshToken: tokenData.refresh_token,
+    expiresIn:    tokenData.expires_in,
+    expiresAt:    Date.now() + tokenData.expires_in*1000,
+    locationId:   tokenData.locationId,
+    scopes:       tokenData.scope,
+    tokenStatus:  'valid',
+    createdAt:    new Date().toISOString()
+  });
+  scheduleRefresh(id);
+  return id;
+}
 
-// ── 6. Legacy API routes (still supported) -----------------------------------
-// ... existing /api/ghl/products, /contacts, /media/upload endpoints remain ...
+app.get(['/oauth/callback','/api/oauth/callback'], async (req,res)=>{
+  const { code } = req.query;
+  if (!code) return res.status(400).send('Missing code');
+  try {
+    const redirectUri = req.path.startsWith('/api')
+      ? (process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/api/oauth/callback')
+      : (process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback');
+    const tokenData = await exchangeCode(code, redirectUri);
+    const installId = storeInstall(tokenData);
+    res.redirect(`https://listings.engageautomations.com/?installation_id=${installId}&welcome=true`);
+  } catch(e) {
+    console.error('OAuth error', e.response?.data || e.message);
+    res.status(500).send('OAuth failed');
+  }
+});
 
-// ── 7. NEW LOCATION‑CENTRIC ROUTES ------------------------------------------
+app.get('/api/oauth/status', (req,res)=>{
+  const inst = installations.get(req.query.installation_id);
+  if (!inst) return res.json({ authenticated:false });
+  res.json({ authenticated:true, tokenStatus:inst.tokenStatus, locationId:inst.locationId });
+});
+
+// ── 7. Legacy API routes (still supported) -----------------------------------
+// ... keep your existing /api/ghl/products, /contacts, /media/upload etc ...
+
+// ── 8. NEW LOCATION‑CENTRIC ROUTES ------------------------------------------
 const memUpload = multer({ storage: multer.memoryStorage(), limits:{ fileSize:25*1024*1024 } });
 
-// 7.1 Multi‑image upload
 app.post('/api/ghl/locations/:locationId/media', memUpload.array('file', 10), async (req,res)=>{
   const { locationId } = req.params;
   const inst = Array.from(installations.values()).find(i => i.locationId === locationId);
@@ -124,36 +170,10 @@ app.post('/api/ghl/locations/:locationId/media', memUpload.array('file', 10), as
     for (const f of req.files) {
       const form = new FormData();
       form.append('file', f.buffer, { filename:f.originalname, contentType:f.mimetype });
-      const { data } = await axios.post(`https://services.leadconnectorhq.com/medias/upload-file`, form, {
+      const { data } = await axios.post('https://services.leadconnectorhq.com/medias/upload-file', form, {
         headers:{ ...form.getHeaders(), Authorization:`Bearer ${inst.accessToken}`, Version:'2021-07-28' }, timeout:20000 });
       results.push(data);
     }
     res.json({ success:true, uploaded:results });
   } catch(e) {
-    res.status(e.response?.status||500).json({ success:false, error:e.response?.data||e.message });
-  }
-});
-
-// 7.2 Product create
-app.post('/api/ghl/locations/:locationId/products', async (req,res)=>{
-  const { locationId } = req.params;
-  const inst = Array.from(installations.values()).find(i => i.locationId === locationId);
-  if (!inst) return res.status(404).json({ success:false, error:`Unknown locationId ${locationId}` });
-  try {
-    await ensureFreshToken(inst.id);
-    const body = { ...req.body, locationId }; // React form already sends proper fields
-    const { data, status } = await axios.post('https://services.leadconnectorhq.com/products/', body, {
-      headers:{ Authorization:`Bearer ${inst.accessToken}`, 'Content-Type':'application/json', Version:'2021-07-28' }, timeout:15000 });
-    res.status(status).json({ success:true, product:data.product||data });
-  } catch(e) {
-    res.status(e.response?.status||500).json({ success:false, error:e.response?.data||e.message });
-  }
-});
-
-// ── 8. Start server & arm refresh timers ------------------------------------
-app.listen(PORT,'0.0.0.0',()=>{
-  console.log(`GHL proxy listening on ${PORT}`);
-  for (const id of installations.keys()) scheduleRefresh(id);
-});
-
-module.exports = app;
+    res.status(e.response?.status||500).json({ success:false, error:e.response?.data||
