@@ -176,4 +176,29 @@ app.post('/api/ghl/locations/:locationId/media', memUpload.array('file', 10), as
     }
     res.json({ success:true, uploaded:results });
   } catch(e) {
-    res.status(e.response?.status||500).json({ success:false, error:e.response?.data||
+    res.status(e.response?.status||500).json({ success:false, error:e.response?.data||e.message });
+  }
+});
+
+app.post('/api/ghl/locations/:locationId/products', async (req,res)=>{
+  const { locationId } = req.params;
+  const inst = Array.from(installations.values()).find(i => i.locationId === locationId);
+  if (!inst) return res.status(404).json({ success:false, error:`Unknown locationId ${locationId}` });
+  try {
+    await ensureFreshToken(inst.id);
+    const body = { ...req.body, locationId }; // stateform sends proper fields
+    const { data } = await axios.post('https://services.leadconnectorhq.com/products/', body, {
+      headers:{ Authorization:`Bearer ${inst.accessToken}`, 'Content-Type':'application/json', Version:'2021-07-28' }, timeout:15000 });
+    res.json({ success:true, product:data.product||data });
+  } catch(e) {
+    res.status(e.response?.status||500).json({ success:false, error:e.response?.data||e.message });
+  }
+});
+
+// ── 9. Start server & arm refresh timers ------------------------------------
+app.listen(PORT,'0.0.0.0', ()=>{
+  console.log(`GHL proxy listening on ${PORT}`);
+  for (const id of installations.keys()) scheduleRefresh(id);
+});
+
+module.exports = app;
