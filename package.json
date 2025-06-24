@@ -1,25 +1,26 @@
-// index.js – GoHighLevel proxy with token‑refresh + *location‑centric* API (v1.4.4)
-// ---------------------------------------------------------------------------
-// ✅ CommonJS build (no "type":"module" needed)
-// ✅ Keeps original refresh, media, product & contact endpoints
-// ✅ Adds location‑centric routes (media + products)
-// ✅ **Restores full OAuth flow** so `/api/oauth/callback` works again
-// ---------------------------------------------------------------------------
-
-/* eslint-disable no-console */
-
-const express  = require('express');
-const cors     = require('cors');
-const axios    = require('axios');
-const multer   = require('multer');
-const FormData = require('form-data');
-const fs       = require('fs');
-const path     = require('path');
-const app      = express();
-const PORT     = process.env.PORT || 3000;
-
-// ── Startup config sanity check -------------------------------------------
-console.log('Config check:', {
-  CLIENT_ID: process.env.GHL_CLIENT_ID ? '[set]' : undefined,
-  REDIRECT : process.env.GHL_REDIRECT_URI || '/api/oauth/callback'
-});
+{
+  "name": "gohighlevel-oauth-backend",
+  "version": "1.5.5",
+  "description": "Railway proxy for GoHighLevel – location‑centric API + JWT + automatic token refresh",
+  "main": "index.js",
+  "scripts": {
+    "start": "node --enable-source-maps -r dotenv/config index.js",
+    "dev": "nodemon -r dotenv/config index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "form-data": "^4.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
