@@ -1,4 +1,4 @@
-// index.js – Railway GoHighLevel Proxy (v1.6.0)
+// index.js – Railway GoHighLevel Proxy (v1.6.1)
 // ---------------------------------------------------------------------------
 // • Location‑centric API  →  /locations/:locationId/products & /media
 // • JWT gatekeeper        →  /api/auth/token
@@ -23,7 +23,8 @@ import cron     from 'node-cron';
 import path     from 'path';
 import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
 
 const PORT   = process.env.PORT || 5000;
 const HOST   = process.env.HOST || '0.0.0.0';
@@ -48,7 +49,19 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (_, res) => res.send('OK'));
 
 // ── 3. Installations map -----------------------------------------------------
-/** @type {Map<string, import('./types').Installation>} */
+/**
+ * @typedef {Object} Installation
+ * @property {string} id
+ * @property {string} locationId
+ * @property {string} accessToken
+ * @property {string|null} refreshToken
+ * @property {number} expiresAt
+ * @property {string} [orgName]
+ * @property {string} [userEmail]
+ * @property {Promise<string>} [refreshing]
+ */
+
+/** @type {Map<string, Installation>} */
 const installations = new Map();
 
 if (process.env.GHL_ACCESS_TOKEN && process.env.GHL_LOCATION_ID) {
@@ -98,9 +111,9 @@ function requireJWT(req, res, next) {
   try {
     const raw = (req.headers.authorization || '').split(' ')[1];
     jwt.verify(raw, SECRET);
-    return next();
+    next();
   } catch {
-    return res.status(401).json({ error: 'JWT invalid or missing' });
+    res.status(401).json({ error: 'JWT invalid or missing' });
   }
 }
 
@@ -134,7 +147,9 @@ async function ensureFresh(inst) {
 
 cron.schedule('0 * * * *', () => {
   installations.forEach(inst => {
-    if (inst.expiresAt < Date.now() + 10 * 60 * 1000) ensureFresh(inst).catch(e => console.error('[cron]', e.message));
+    if (inst.expiresAt < Date.now() + 10 * 60 * 1000) {
+      ensureFresh(inst).catch(e => console.error('[cron]', e.message));
+    }
   });
 });
 
@@ -177,20 +192,4 @@ router.post('/locations/:locationId/products', async (req, res) => {
   try {
     const { data, status } = await axios.post('https://services.leadconnectorhq.com/products/', req.body, {
       headers: {
-        Authorization: `Bearer ${inst.accessToken}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Version: '2021-07-28',
-      },
-      timeout: 15000,
-    });
-    res.status(status).send(data);
-  } catch (err) {
-    console.error('[product] error', err.response?.data || err.message);
-    res.status(err.response?.status || 500).json({ error: 'product create failed', details: err.response?.data });
-  }
-});
-
-// ── 9. Legacy routes → 410 Gone --------------------------------------------
-['/api/ghl/products', '/api/ghl/products/*', '/api/ghl/media', '/api/ghl/media/*'].forEach(p =>
-  app.all(p, (_, res
+        Authorization
