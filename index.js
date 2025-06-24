@@ -1,4 +1,4 @@
-// index.js – GoHighLevel proxy with token‑refresh + *location‑centric* API (v1.4.6)
+// index.js – GoHighLevel proxy with token‑refresh + *location‑centric* API (v1.4.7)
 // ---------------------------------------------------------------------------
 /* eslint-disable no-console */
 
@@ -100,7 +100,7 @@ function getInstallFromReq(req, res) {
 }
 
 // ── 5. Basic routes ----------------------------------------------------------
-app.get('/', (_,res)=>res.json({ service:'GHL proxy', version:'1.4.6', installs:installations.size, ts:Date.now() }));
+app.get('/', (_,res)=>res.json({ service:'GHL proxy', version:'1.4.7', installs:installations.size, ts:Date.now() }));
 app.get('/health',(_,res)=>res.json({ ok:true, ts:Date.now() }));
 
 // ── 6. FULL OAUTH FLOW -------------------------------------------------------
@@ -170,6 +170,4 @@ app.post('/api/ghl/locations/:locationId/media', memUpload.array('file', 10), as
       const form = new FormData();
       form.append('file', f.buffer, { filename:f.originalname, contentType:f.mimetype });
       const { data } = await axios.post('https://services.leadconnectorhq.com/medias/upload-file', form, {
-        headers:{ ...form.getHeaders(), Authorization:`Bearer ${inst.accessToken}`, Version:'2021-07-28' }, timeout:20000 });
-      results.push(data);
-    }
+        headers:{ ...form.getHeaders(), Authorization:`Bearer ${inst.access
