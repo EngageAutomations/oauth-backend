@@ -1,8 +1,7 @@
-Package update ready for deployment trigger
 {
   "name": "oauth-backend-emergency",
-  "version": "5.2.0-product-api-force",
-  "description": "OAuth Backend with Product API - Force Deploy",
+  "version": "5.3.2",
+  "description": "Complete GoHighLevel OAuth Backend with working media upload and pricing",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
