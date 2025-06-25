@@ -1,6 +1,4 @@
-// OAuth Backend Fix - Add missing endpoints for installation tracking
-// This file adds the missing /installations endpoint and debugging
-
+// Enhanced OAuth Backend with Product API endpoints
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -102,12 +100,12 @@ app.get('/', (req, res) => {
   const authenticatedCount = Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length;
   res.json({
     service: "GoHighLevel OAuth Backend",
-    version: "5.1.1-fixed",
+    version: "5.2.0-with-products",
     installs: installations.size,
     authenticated: authenticatedCount,
     status: "operational",
     features: ["oauth", "products", "images", "pricing"],
-    debug: "installation tracking active",
+    debug: "product API endpoints active",
     ts: Date.now()
   });
 });
@@ -116,7 +114,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
 });
 
-// MISSING INSTALLATIONS ENDPOINT - This was the problem!
+// INSTALLATIONS ENDPOINT
 app.get('/installations', (req, res) => {
   const installList = Array.from(installations.values()).map(inst => ({
     id: inst.id,
@@ -168,11 +166,10 @@ function storeInstall(tokenData) {
   return id;
 }
 
-// OAUTH CALLBACK - Enhanced with better logging
+// OAUTH CALLBACK
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   console.log('=== OAUTH CALLBACK RECEIVED ===');
   console.log('Query params:', req.query);
-  console.log('Headers:', req.headers);
   
   const { code, error, state } = req.query;
   
@@ -192,7 +189,6 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
       : (process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback');
 
     console.log('Exchanging code for tokens...');
-    console.log('Redirect URI:', redirectUri);
     
     const tokenData = await exchangeCode(code, redirectUri);
     console.log('Token exchange successful');
@@ -216,9 +212,162 @@ app.get('/api/oauth/status', (req, res) => {
   res.json({ authenticated: true, tokenStatus: inst.tokenStatus, locationId: inst.locationId });
 });
 
+// ===== NEW PRODUCT API ENDPOINTS =====
+
+// Create Product
+app.post('/api/products/create', async (req, res) => {
+  const inst = requireInstall(req, res);
+  if (!inst) return;
+
+  try {
+    await ensureFreshToken(inst.id);
+    
+    const productData = {
+      locationId: inst.locationId,
+      name: req.body.name,
+      description: req.body.description,
+      productType: req.body.productType || 'DIGITAL'
+    };
+
+    console.log('Creating product:', productData);
+
+    const { data } = await axios.post(
+      'https://services.leadconnectorhq.com/products/',
+      productData,
+      {
+        headers: {
+          Authorization: `Bearer ${inst.accessToken}`,
+          Version: '2021-07-28',
+          Accept: 'application/json',
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+
+    console.log('Product created successfully:', data);
+    res.json({ success: true, product: data });
+  } catch (error) {
+    console.error('Product creation error:', error.response?.data || error.message);
+    res.status(400).json({ 
+      success: false, 
+      error: error.response?.data || error.message 
+    });
+  }
+});
+
+// List Products
+app.get('/api/products', async (req, res) => {
+  const inst = requireInstall(req, res);
+  if (!inst) return;
+
+  try {
+    await ensureFreshToken(inst.id);
+    
+    const { limit = 20, offset = 0 } = req.query;
+
+    const { data } = await axios.get(
+      `https://services.leadconnectorhq.com/products/?locationId=${inst.locationId}&limit=${limit}&offset=${offset}`,
+      {
+        headers: {
+          Authorization: `Bearer ${inst.accessToken}`,
+          Version: '2021-07-28',
+          Accept: 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+
+    res.json({ success: true, products: data.products || [], total: data.total || 0 });
+  } catch (error) {
+    console.error('Product listing error:', error.response?.data || error.message);
+    res.status(400).json({ 
+      success: false, 
+      error: error.response?.data || error.message 
+    });
+  }
+});
+
+// Create Product Price
+app.post('/api/products/:productId/prices', async (req, res) => {
+  const inst = requireInstall(req, res);
+  if (!inst) return;
+
+  try {
+    await ensureFreshToken(inst.id);
+    
+    const { productId } = req.params;
+    const priceData = {
+      name: req.body.name,
+      type: req.body.type || 'one_time',
+      amount: req.body.amount,
+      currency: req.body.currency || 'USD'
+    };
+
+    if (req.body.type === 'recurring' && req.body.recurring) {
+      priceData.recurring = req.body.recurring;
+    }
+
+    console.log('Creating price for product:', productId, priceData);
+
+    const { data } = await axios.post(
+      `https://services.leadconnectorhq.com/products/${productId}/prices`,
+      priceData,
+      {
+        headers: {
+          Authorization: `Bearer ${inst.accessToken}`,
+          Version: '2021-07-28',
+          Accept: 'application/json',
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+
+    console.log('Price created successfully:', data);
+    res.json({ success: true, price: data });
+  } catch (error) {
+    console.error('Price creation error:', error.response?.data || error.message);
+    res.status(400).json({ 
+      success: false, 
+      error: error.response?.data || error.message 
+    });
+  }
+});
+
+// Test Connection
+app.get('/api/test-connection', async (req, res) => {
+  const inst = requireInstall(req, res);
+  if (!inst) return;
+
+  try {
+    await ensureFreshToken(inst.id);
+    
+    const { data } = await axios.get(
+      `https://services.leadconnectorhq.com/locations/${inst.locationId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${inst.accessToken}`,
+          Version: '2021-07-28',
+          Accept: 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+
+    res.json({ success: true, location: data });
+  } catch (error) {
+    console.error('Connection test error:', error.response?.data || error.message);
+    res.status(400).json({ 
+      success: false, 
+      error: error.response?.data || error.message 
+    });
+  }
+});
+
 // Start server
 app.listen(port, () => {
-  console.log(`OAuth backend running on port ${port}`);
+  console.log(`Enhanced OAuth backend running on port ${port}`);
   console.log(`Installations: ${installations.size}`);
-  console.log('Ready for OAuth callbacks');
+  console.log('Ready for OAuth callbacks and product API calls');
 });
