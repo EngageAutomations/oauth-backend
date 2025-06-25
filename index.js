@@ -94,6 +94,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'operational',
     version: '5.4.2-oauth-fixed',
+    deploymentTimestamp: '2025-06-25T20:12:02.254Z',
     message: 'GoHighLevel OAuth Backend with Fixed Token Handling',
     endpoints: [
       'GET /installations',
