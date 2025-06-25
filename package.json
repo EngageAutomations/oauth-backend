@@ -1,8 +1,8 @@
 {
   "name": "oauth-backend-emergency",
-  "version": "1.4.3-redeploy-1750827807813",
+  "version": "1.4.3-server-deploy",
   "description": "OAuth Backend - Final Deployment Attempt",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js"
