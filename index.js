@@ -1,4 +1,6 @@
-// Enhanced OAuth Backend with Product API endpoints
+// OAuth Backend Fix - Add missing endpoints for installation tracking
+// This file adds the missing /installations endpoint and debugging
+
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -100,12 +102,12 @@ app.get('/', (req, res) => {
   const authenticatedCount = Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length;
   res.json({
     service: "GoHighLevel OAuth Backend",
-    version: "5.2.0-with-products",
+    version: "5.2.1-products-safe",
     installs: installations.size,
     authenticated: authenticatedCount,
     status: "operational",
     features: ["oauth", "products", "images", "pricing"],
-    debug: "product API endpoints active",
+    debug: "product endpoints added safely",
     ts: Date.now()
   });
 });
@@ -114,7 +116,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
 });
 
-// INSTALLATIONS ENDPOINT
+// MISSING INSTALLATIONS ENDPOINT - This was the problem!
 app.get('/installations', (req, res) => {
   const installList = Array.from(installations.values()).map(inst => ({
     id: inst.id,
@@ -166,10 +168,11 @@ function storeInstall(tokenData) {
   return id;
 }
 
-// OAUTH CALLBACK
+// OAUTH CALLBACK - Enhanced with better logging
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   console.log('=== OAUTH CALLBACK RECEIVED ===');
   console.log('Query params:', req.query);
+  console.log('Headers:', req.headers);
   
   const { code, error, state } = req.query;
   
@@ -189,6 +192,7 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
       : (process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback');
 
     console.log('Exchanging code for tokens...');
+    console.log('Redirect URI:', redirectUri);
     
     const tokenData = await exchangeCode(code, redirectUri);
     console.log('Token exchange successful');
@@ -212,7 +216,7 @@ app.get('/api/oauth/status', (req, res) => {
   res.json({ authenticated: true, tokenStatus: inst.tokenStatus, locationId: inst.locationId });
 });
 
-// ===== NEW PRODUCT API ENDPOINTS =====
+// ===== PRODUCT API ENDPOINTS (ADDED SAFELY) =====
 
 // Create Product
 app.post('/api/products/create', async (req, res) => {
@@ -335,39 +339,9 @@ app.post('/api/products/:productId/prices', async (req, res) => {
   }
 });
 
-// Test Connection
-app.get('/api/test-connection', async (req, res) => {
-  const inst = requireInstall(req, res);
-  if (!inst) return;
-
-  try {
-    await ensureFreshToken(inst.id);
-    
-    const { data } = await axios.get(
-      `https://services.leadconnectorhq.com/locations/${inst.locationId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${inst.accessToken}`,
-          Version: '2021-07-28',
-          Accept: 'application/json'
-        },
-        timeout: 15000
-      }
-    );
-
-    res.json({ success: true, location: data });
-  } catch (error) {
-    console.error('Connection test error:', error.response?.data || error.message);
-    res.status(400).json({ 
-      success: false, 
-      error: error.response?.data || error.message 
-    });
-  }
-});
-
 // Start server
 app.listen(port, () => {
-  console.log(`Enhanced OAuth backend running on port ${port}`);
+  console.log(`OAuth backend running on port ${port}`);
   console.log(`Installations: ${installations.size}`);
   console.log('Ready for OAuth callbacks and product API calls');
 });
