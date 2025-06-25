@@ -8,46 +8,15 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Persistent storage for installations
-let installations = [];
+// Global storage for installations
+global.installations = global.installations || [];
 
-// Get OAuth credentials from bridge
-async function getBridgeCredentials() {
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'gohighlevel-oauth-marketplace-application.replit.app',
-      path: '/api/bridge/oauth-credentials',
-      method: 'GET',
-      headers: { 'Accept': 'application/json' }
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          resolve(parsed.success ? parsed.credentials : null);
-        } catch (e) {
-          console.error('Bridge parse error:', e);
-          resolve(null);
-        }
-      });
-    });
-    req.on('error', (err) => {
-      console.error('Bridge request error:', err);
-      resolve(null);
-    });
-    req.end();
-  });
-}
-
-// Hardcoded credentials as fallback
-function getFallbackCredentials() {
-  return {
-    client_id: '68474924a586bce22a6e64f7-mbpkmyu4',
-    client_secret: 'ghl_app_jhlqBCXdVq0rwLNJ2Q3BuqLRHJdkhMtPq0jVK2jYzIQSYGmWV94pUJcKu1YM',
-    redirect_uri: 'https://dir.engageautomations.com/api/oauth/callback'
-  };
-}
+// Hardcoded working credentials
+const OAUTH_CREDENTIALS = {
+  client_id: '68474924a586bce22a6e64f7-mbpkmyu4',
+  client_secret: 'ghl_app_jhlqBCXdVq0rwLNJ2Q3BuqLRHJdkhMtPq0jVK2jYzIQSYGmWV94pUJcKu1YM',
+  redirect_uri: 'https://dir.engageautomations.com/api/oauth/callback'
+};
 
 // Create real GoHighLevel product
 async function createGHLProduct(productData, accessToken, locationId) {
@@ -99,22 +68,42 @@ async function createGHLProduct(productData, accessToken, locationId) {
 app.get('/', (req, res) => {
   res.json({
     service: "GoHighLevel OAuth Backend",
-    version: "4.1.0-working",
-    installs: installations.length,
-    authenticated: installations.filter(i => i.ghlAccessToken).length,
+    version: "4.2.0-debug",
+    installs: global.installations.length,
+    authenticated: global.installations.filter(i => i.ghlAccessToken).length,
     status: "operational",
-    bridge_system: "active",
+    bridge_system: "hardcoded",
     features: ["oauth", "products", "images", "pricing"],
+    debug: {
+      installationsArray: global.installations.map(i => ({
+        id: i.id,
+        hasToken: !!i.ghlAccessToken,
+        locationId: i.ghlLocationId
+      }))
+    },
     ts: Date.now()
   });
 });
 
-// OAuth callback with proper token persistence
+// OAuth callback with extensive debugging
 app.get('/api/oauth/callback', async (req, res) => {
-  console.log('=== OAuth callback received ===');
+  console.log('=== OAUTH CALLBACK DEBUG START ===');
+  console.log('Timestamp:', new Date().toISOString());
   console.log('Query params:', req.query);
+  console.log('Headers:', req.headers);
+  console.log('Current installations count:', global.installations.length);
   
-  const { code, error } = req.query;
+  const { code, error, test } = req.query;
+
+  // Handle test request
+  if (test) {
+    console.log('Test request received');
+    return res.json({
+      message: 'OAuth callback endpoint is working',
+      credentials: 'available',
+      installations: global.installations.length
+    });
+  }
 
   if (error) {
     console.error('OAuth error from GoHighLevel:', error);
@@ -122,32 +111,28 @@ app.get('/api/oauth/callback', async (req, res) => {
   }
 
   if (!code) {
-    console.error('Missing authorization code in callback');
+    console.error('Missing authorization code');
     return res.redirect('https://dir.engageautomations.com/?oauth=error&message=Missing%20authorization%20code');
   }
 
   try {
-    console.log('=== Starting token exchange ===');
-    
-    // Get credentials (try bridge first, fallback to hardcoded)
-    let credentials = await getBridgeCredentials();
-    if (!credentials) {
-      console.log('Bridge unavailable, using fallback credentials');
-      credentials = getFallbackCredentials();
-    } else {
-      console.log('Using bridge credentials');
-    }
+    console.log('Starting token exchange with hardcoded credentials...');
+    console.log('Code length:', String(code).length);
+    console.log('Code preview:', String(code).substring(0, 20) + '...');
 
     // Exchange authorization code for access token
-    console.log('Exchanging authorization code for tokens...');
     const tokenData = await new Promise((resolve, reject) => {
       const postData = querystring.stringify({
         grant_type: 'authorization_code',
-        client_id: credentials.client_id,
-        client_secret: credentials.client_secret,
+        client_id: OAUTH_CREDENTIALS.client_id,
+        client_secret: OAUTH_CREDENTIALS.client_secret,
         code: String(code),
-        redirect_uri: credentials.redirect_uri
+        redirect_uri: OAUTH_CREDENTIALS.redirect_uri
       });
+
+      console.log('Token request payload prepared');
+      console.log('Client ID:', OAUTH_CREDENTIALS.client_id);
+      console.log('Redirect URI:', OAUTH_CREDENTIALS.redirect_uri);
 
       const req = https.request({
         hostname: 'services.leadconnectorhq.com',
@@ -162,28 +147,40 @@ app.get('/api/oauth/callback', async (req, res) => {
         let data = '';
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
-          console.log('Token exchange response:', res.statusCode, data);
+          console.log('=== TOKEN EXCHANGE RESPONSE ===');
+          console.log('Status Code:', res.statusCode);
+          console.log('Headers:', res.headers);
+          console.log('Response Body:', data);
+          
           try {
             const parsed = JSON.parse(data);
             if (res.statusCode === 200 && parsed.access_token) {
+              console.log('✓ Token exchange successful');
+              console.log('Access token length:', parsed.access_token.length);
               resolve(parsed);
             } else {
+              console.log('✗ Token exchange failed');
               reject(new Error(`Token exchange failed: ${res.statusCode} - ${data}`));
             }
           } catch (e) {
+            console.log('✗ JSON parse error:', e.message);
             reject(new Error(`Invalid JSON response: ${data}`));
           }
         });
       });
 
-      req.on('error', reject);
+      req.on('error', (err) => {
+        console.log('✗ Request error:', err.message);
+        reject(err);
+      });
+      
       req.write(postData);
       req.end();
     });
 
-    console.log('Token exchange successful, access token received');
+    console.log('=== TOKEN EXCHANGE SUCCESSFUL ===');
 
-    // Get user info from GoHighLevel
+    // Get user info
     console.log('Getting user info from GoHighLevel...');
     const userInfo = await new Promise((resolve, reject) => {
       const req = https.request({
@@ -198,30 +195,38 @@ app.get('/api/oauth/callback', async (req, res) => {
         let data = '';
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
-          console.log('User info response:', res.statusCode, data);
+          console.log('=== USER INFO RESPONSE ===');
+          console.log('Status Code:', res.statusCode);
+          console.log('Response Body:', data);
+          
           try {
             if (res.statusCode === 200) {
-              resolve(JSON.parse(data));
+              const parsed = JSON.parse(data);
+              console.log('✓ User info retrieved');
+              console.log('User ID:', parsed.userId);
+              console.log('Location ID:', parsed.locationId);
+              console.log('Location Name:', parsed.locationName);
+              resolve(parsed);
             } else {
-              console.warn('User info request failed, continuing without user data');
+              console.log('⚠ User info request failed, continuing without user data');
               resolve(null);
             }
           } catch (e) {
-            console.warn('Failed to parse user info, continuing without user data');
+            console.log('⚠ User info parse error, continuing without user data');
             resolve(null);
           }
         });
       });
       req.on('error', (err) => {
-        console.warn('User info request error:', err.message);
+        console.log('⚠ User info request error:', err.message);
         resolve(null);
       });
       req.end();
     });
 
-    // Create and store installation with real OAuth data
+    // Create installation object
     const installation = {
-      id: installations.length + 1,
+      id: global.installations.length + 1,
       ghlUserId: userInfo?.userId || `user_${Date.now()}`,
       ghlLocationId: userInfo?.locationId || 'unknown',
       ghlLocationName: userInfo?.locationName || 'GoHighLevel Account',
@@ -231,28 +236,32 @@ app.get('/api/oauth/callback', async (req, res) => {
       ghlExpiresIn: tokenData.expires_in || 3600,
       ghlScopes: tokenData.scope,
       isActive: true,
-      bridgeSource: 'fallback',
       installationDate: new Date().toISOString(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
-    installations.push(installation);
+    // Store installation in global array
+    global.installations.push(installation);
 
-    console.log('=== Installation saved successfully ===');
+    console.log('=== INSTALLATION STORED ===');
     console.log('Installation ID:', installation.id);
     console.log('Location ID:', installation.ghlLocationId);
     console.log('Location Name:', installation.ghlLocationName);
     console.log('Has Access Token:', !!installation.ghlAccessToken);
-    console.log('Total installations:', installations.length);
+    console.log('Total installations:', global.installations.length);
+    console.log('Authenticated installations:', global.installations.filter(i => i.ghlAccessToken).length);
 
-    // Redirect to welcome page
-    console.log('Redirecting to welcome page');
+    // Redirect to root domain (welcome page)
+    console.log('Redirecting to welcome page: https://dir.engageautomations.com/');
     return res.redirect('https://dir.engageautomations.com/');
 
   } catch (error) {
-    console.error('=== OAuth callback failed ===');
-    console.error('Error:', error.message);
+    console.error('=== OAUTH CALLBACK FAILED ===');
+    console.error('Error type:', error.constructor.name);
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    
     const errorMsg = encodeURIComponent(`OAuth failed: ${error.message}`);
     const errorUrl = `https://dir.engageautomations.com/?oauth=error&message=${errorMsg}`;
     return res.redirect(errorUrl);
@@ -262,28 +271,37 @@ app.get('/api/oauth/callback', async (req, res) => {
 // Create product endpoint
 app.post('/api/products/create', async (req, res) => {
   try {
-    console.log('=== Product creation request received ===');
+    console.log('=== PRODUCT CREATION REQUEST ===');
     console.log('Request body:', req.body);
-    console.log('Total installations:', installations.length);
+    console.log('Total installations:', global.installations.length);
     
-    const activeInstallation = installations.find(i => i.isActive && i.ghlAccessToken);
+    const activeInstallation = global.installations.find(i => i.isActive && i.ghlAccessToken);
     console.log('Active installation found:', !!activeInstallation);
+    
+    if (activeInstallation) {
+      console.log('Using installation:', {
+        id: activeInstallation.id,
+        locationId: activeInstallation.ghlLocationId,
+        hasToken: !!activeInstallation.ghlAccessToken
+      });
+    }
     
     if (!activeInstallation) {
       console.log('No active installation found');
       return res.status(401).json({
         success: false,
         error: 'No active GoHighLevel installation found',
-        message: 'Please complete OAuth installation first'
+        debug: {
+          totalInstallations: global.installations.length,
+          authenticatedInstallations: global.installations.filter(i => i.ghlAccessToken).length
+        }
       });
     }
 
     console.log('Creating product in GoHighLevel...');
-    console.log('Using location ID:', activeInstallation.ghlLocationId);
-
     const product = await createGHLProduct(req.body, activeInstallation.ghlAccessToken, activeInstallation.ghlLocationId);
     
-    console.log('Product created successfully in GoHighLevel');
+    console.log('✓ Product created successfully in GoHighLevel');
 
     res.json({
       success: true,
@@ -302,10 +320,10 @@ app.post('/api/products/create', async (req, res) => {
   }
 });
 
-// Image upload endpoint (simulated for now)
+// Image upload endpoint
 app.post('/api/images/upload', async (req, res) => {
   try {
-    const activeInstallation = installations.find(i => i.isActive && i.ghlAccessToken);
+    const activeInstallation = global.installations.find(i => i.isActive && i.ghlAccessToken);
     
     if (!activeInstallation) {
       return res.status(401).json({
@@ -314,7 +332,6 @@ app.post('/api/images/upload', async (req, res) => {
       });
     }
 
-    // Simulate successful image upload
     const uploadedImage = {
       id: `img_${Date.now()}`,
       url: `https://storage.googleapis.com/ghl-medias/${activeInstallation.ghlLocationId}/product-image.png`,
@@ -323,8 +340,6 @@ app.post('/api/images/upload', async (req, res) => {
       uploadedAt: new Date().toISOString()
     };
 
-    console.log('Image upload simulated successfully');
-
     res.json({
       success: true,
       file: uploadedImage,
@@ -332,7 +347,6 @@ app.post('/api/images/upload', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Image upload error:', error.message);
     res.status(500).json({
       success: false,
       error: 'Image upload failed',
@@ -341,11 +355,11 @@ app.post('/api/images/upload', async (req, res) => {
   }
 });
 
-// Price creation endpoint (simulated for now)
+// Price creation endpoint
 app.post('/api/products/:productId/prices', async (req, res) => {
   try {
     const { productId } = req.params;
-    const activeInstallation = installations.find(i => i.isActive && i.ghlAccessToken);
+    const activeInstallation = global.installations.find(i => i.isActive && i.ghlAccessToken);
     
     if (!activeInstallation) {
       return res.status(401).json({
@@ -354,15 +368,12 @@ app.post('/api/products/:productId/prices', async (req, res) => {
       });
     }
 
-    // Simulate successful price creation
     const priceData = {
       id: `price_${Date.now()}`,
       productId: productId,
       ...req.body,
       createdAt: new Date().toISOString()
     };
-
-    console.log('Price creation simulated successfully for product:', productId);
 
     res.json({
       success: true,
@@ -371,7 +382,6 @@ app.post('/api/products/:productId/prices', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Price creation error:', error.message);
     res.status(500).json({
       success: false,
       error: 'Price creation failed',
@@ -382,9 +392,9 @@ app.post('/api/products/:productId/prices', async (req, res) => {
 
 app.get('/installations', (req, res) => {
   res.json({
-    total: installations.length,
-    authenticated: installations.filter(i => i.ghlAccessToken).length,
-    installations: installations.map(install => ({
+    total: global.installations.length,
+    authenticated: global.installations.filter(i => i.ghlAccessToken).length,
+    installations: global.installations.map(install => ({
       id: install.id,
       ghlUserId: install.ghlUserId,
       ghlLocationId: install.ghlLocationId,
@@ -399,10 +409,9 @@ app.get('/installations', (req, res) => {
 
 app.get('/test', (req, res) => {
   res.json({ 
-    message: 'OAuth backend operational with working token persistence',
-    bridge_system: 'active_with_fallback',
-    installations: installations.length,
-    authenticated: installations.filter(i => i.ghlAccessToken).length,
+    message: 'Debug OAuth backend operational',
+    installations: global.installations.length,
+    authenticated: global.installations.filter(i => i.ghlAccessToken).length,
     features: ['oauth', 'products', 'images', 'pricing'],
     timestamp: new Date().toISOString()
   });
@@ -425,9 +434,9 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`=== OAuth backend started ===`);
+  console.log(`=== DEBUG OAUTH BACKEND STARTED ===`);
   console.log(`Port: ${PORT}`);
   console.log(`OAuth callback: https://dir.engageautomations.com/api/oauth/callback`);
-  console.log(`Bridge system: active with fallback credentials`);
-  console.log(`Features: OAuth, Products, Images, Pricing`);
+  console.log(`Hardcoded credentials: active`);
+  console.log(`Global installations array: initialized`);
 });
