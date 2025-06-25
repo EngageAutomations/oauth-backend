@@ -1,4 +1,4 @@
-// Railway Backend with Bridge Integration - Uses Replit Bridge for OAuth
+// Railway Backend with Bridge-First Architecture
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -6,6 +6,7 @@ const multer = require('multer');
 const FormData = require('form-data');
 const fs = require('fs');
 const cron = require('node-cron');
+const getCreds = require('./utils/fetchBridge');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -21,29 +22,8 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// In-memory storage for OAuth installations with proper token handling
+// In-memory storage for OAuth installations
 const installations = new Map();
-
-// Bridge system configuration
-const BRIDGE_BASE_URL = 'https://dir.engageautomations.com'; // This would be the Replit URL in production
-
-// Get OAuth credentials from Replit bridge
-async function getBridgeCredentials() {
-  try {
-    console.log('[BRIDGE] Requesting OAuth credentials from Replit bridge...');
-    const response = await axios.get(`${BRIDGE_BASE_URL}/api/bridge/oauth-credentials`);
-    
-    if (response.data.success) {
-      console.log('[BRIDGE] OAuth credentials received from Replit');
-      return response.data.credentials;
-    }
-    
-    throw new Error('Bridge credentials not available');
-  } catch (error) {
-    console.error('[BRIDGE] Failed to get credentials:', error.response?.data || error.message);
-    throw new Error('OAuth credentials not available from bridge');
-  }
-}
 
 // Token refresh helpers
 const PADDING_MS = 5 * 60 * 1000; // 5 minutes
@@ -57,11 +37,11 @@ async function refreshAccessToken(installationId) {
   }
 
   try {
-    const credentials = await getBridgeCredentials();
+    const { clientId, clientSecret } = await getCreds();
     
     const body = new URLSearchParams({
-      client_id: credentials.client_id,
-      client_secret: credentials.client_secret,
+      client_id: clientId,
+      client_secret: clientSecret,
       grant_type: 'refresh_token',
       refresh_token: install.refreshToken
     });
@@ -111,9 +91,9 @@ function scheduleRefresh(installationId) {
 app.get('/', (req, res) => {
   res.json({
     status: 'operational',
-    version: '5.4.3-bridge-integrated',
-    message: 'Railway Backend with Replit Bridge Integration',
-    bridge_source: 'replit',
+    version: '6.0.0-bridge-first',
+    message: 'Railway Backend with Bridge-First Architecture',
+    bridge_architecture: true,
     endpoints: [
       'GET /installations',
       'GET /api/oauth/callback',
@@ -124,7 +104,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// OAuth callback endpoint - Uses bridge system for token exchange
+// OAuth callback endpoint - Uses bridge for credentials
 app.get('/api/oauth/callback', async (req, res) => {
   const { code, state } = req.query;
   
@@ -137,15 +117,16 @@ app.get('/api/oauth/callback', async (req, res) => {
 
   try {
     // Get credentials from bridge
-    const credentials = await getBridgeCredentials();
+    const { clientId, clientSecret, redirectBase } = await getCreds();
+    console.log('[BRIDGE] Credentials fetched for OAuth exchange');
     
     // Exchange code for tokens
     const tokenBody = new URLSearchParams({
-      client_id: credentials.client_id,
-      client_secret: credentials.client_secret,
+      client_id: clientId,
+      client_secret: clientSecret,
       grant_type: 'authorization_code',
       code: code,
-      redirect_uri: credentials.redirect_uri
+      redirect_uri: `${redirectBase}/api/oauth/callback`
     });
 
     const tokenResponse = await axios.post(
@@ -188,9 +169,9 @@ app.get('/api/oauth/callback', async (req, res) => {
       expiresIn: tokens.expires_in,
       expiresAt: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
       tokenStatus: 'valid',
-      scopes: tokens.scope || 'products/prices.write products/prices.readonly products/collection.readonly medias.write medias.readonly locations.readonly contacts.readonly contacts.write products/collection.write users.readonly products.write products.readonly',
+      scopes: tokens.scope || 'products.write medias.write',
       createdAt: new Date().toISOString(),
-      bridgeSource: 'replit'
+      bridgeArchitecture: true
     };
 
     installations.set(installationId, installation);
@@ -206,12 +187,12 @@ app.get('/api/oauth/callback', async (req, res) => {
     res.status(500).json({ 
       error: 'OAuth callback failed',
       details: error.response?.data || error.message,
-      bridge_source: 'replit'
+      bridge_architecture: true
     });
   }
 });
 
-// Installations endpoint with bridge info
+// Installations endpoint
 app.get('/installations', (req, res) => {
   const allInstallations = Array.from(installations.values());
   const authenticated = allInstallations.filter(i => i.tokenStatus === 'valid' && i.accessToken);
@@ -219,7 +200,7 @@ app.get('/installations', (req, res) => {
   res.json({
     total: allInstallations.length,
     authenticated: authenticated.length,
-    bridge_source: 'replit',
+    bridge_architecture: true,
     installations: allInstallations.map(install => ({
       id: install.id,
       locationId: install.locationId,
@@ -229,7 +210,7 @@ app.get('/installations', (req, res) => {
       scopes: install.scopes,
       hasAccessToken: !!install.accessToken,
       hasRefreshToken: !!install.refreshToken,
-      bridgeSource: install.bridgeSource
+      bridgeArchitecture: install.bridgeArchitecture
     }))
   });
 });
@@ -424,14 +405,11 @@ cron.schedule('0 * * * *', () => {
   }
 });
 
-// Serve static files
-app.use(express.static('.'));
-
 // Start server
 app.listen(PORT, () => {
-  console.log(`[SERVER] Railway Backend with Bridge Integration v5.4.3 running on port ${PORT}`);
-  console.log(`[BRIDGE] Using Replit bridge at: ${BRIDGE_BASE_URL}`);
-  console.log('[BRIDGE] OAuth credentials will be requested from bridge system');
+  console.log(`[SERVER] Railway Backend with Bridge-First Architecture v6.0.0 running on port ${PORT}`);
+  console.log('[BRIDGE] Bridge URL expected in BRIDGE_URL environment variable');
+  console.log('[BRIDGE] OAuth credentials will be fetched from bridge on first OAuth callback');
 });
 
 module.exports = app;
