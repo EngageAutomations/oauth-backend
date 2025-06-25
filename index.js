@@ -84,6 +84,24 @@ function scheduleRefresh(id) {
   refreshers.set(id, t);
 }
 
+// ── 🆕 Hourly safety sweep for token refresh ──────────────────────────
+const cron = require('node-cron');
+
+cron.schedule('0 * * * *', () => {               // minute 0 of every hour
+  installations.forEach(async inst => {
+    const twoHours = 2 * 60 * 60 * 1_000;
+    if (inst.expiresAt - Date.now() < twoHours) {
+      try {
+        await refreshAccessToken(inst.id);
+        console.log(`[cron] refreshed ${inst.locationId}`);
+      } catch (err) {
+        console.error('[cron refresh]', err.message);
+      }
+    }
+  });
+});
+// ─────────────────────────────────────────────────────────────────────
+
 async function ensureFreshToken(id) {
   const inst = installations.get(id);
   if (!inst) throw new Error('Unknown installation');
@@ -108,7 +126,7 @@ app.get('/', (req, res) => {
   const authenticatedCount = Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length;
   res.json({
     service: "GoHighLevel OAuth Backend",
-    version: "5.3.0-complete-workflow",
+    version: '5.4.1-with-cron-refresh',
     installs: installations.size,
     authenticated: authenticatedCount,
     status: "operational",

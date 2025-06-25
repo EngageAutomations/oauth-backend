@@ -12,7 +12,8 @@
     "cors": "latest",
     "axios": "latest",
     "multer": "latest",
-    "form-data": "latest"
+    "form-data": "latest",
+    "node-cron": "^3.0.3"
   },
   "engines": {
     "node": ">=18"
