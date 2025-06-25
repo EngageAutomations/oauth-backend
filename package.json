@@ -1,6 +1,6 @@
 {
   "name": "ghl-minimal-backend",
-  "version": "2.2.0-minimal",
+  "version": "1.4.3-working",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
