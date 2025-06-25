@@ -1,21 +1,21 @@
 {
-  "name": "oauth-backend-emergency",
-  "version": "5.3.2",
-  "description": "Complete GoHighLevel OAuth Backend with working media upload and pricing",
+  "name": "oauth-backend",
+  "version": "5.4.2-oauth-fixed",
+  "description": "GoHighLevel OAuth Backend with Fixed Token Handling",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js"
   },
   "dependencies": {
-    "express": "latest",
-    "cors": "latest",
-    "axios": "latest",
-    "multer": "latest",
-    "form-data": "latest",
-    "node-cron": "^3.0.3"
+    "express": "^4.18.2",
+    "axios": "^1.4.0",
+    "cors": "^2.8.5",
+    "multer": "^1.4.5-lts.1",
+    "form-data": "^4.0.0",
+    "node-cron": "^3.0.2"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=18.0.0"
   }
 }
