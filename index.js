@@ -1,4 +1,4 @@
-// Fixed Railway Backend with Proper OAuth Token Handling
+// Railway Backend with Bridge Integration - Uses Replit Bridge for OAuth
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -24,10 +24,26 @@ app.use(express.urlencoded({ extended: true }));
 // In-memory storage for OAuth installations with proper token handling
 const installations = new Map();
 
-// OAuth configuration
-const CLIENT_ID = process.env.GHL_CLIENT_ID || 'your_client_id';
-const CLIENT_SECRET = process.env.GHL_CLIENT_SECRET || 'your_client_secret';
-const REDIRECT_URI = process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/api/oauth/callback';
+// Bridge system configuration
+const BRIDGE_BASE_URL = 'https://dir.engageautomations.com'; // This would be the Replit URL in production
+
+// Get OAuth credentials from Replit bridge
+async function getBridgeCredentials() {
+  try {
+    console.log('[BRIDGE] Requesting OAuth credentials from Replit bridge...');
+    const response = await axios.get(`${BRIDGE_BASE_URL}/api/bridge/oauth-credentials`);
+    
+    if (response.data.success) {
+      console.log('[BRIDGE] OAuth credentials received from Replit');
+      return response.data.credentials;
+    }
+    
+    throw new Error('Bridge credentials not available');
+  } catch (error) {
+    console.error('[BRIDGE] Failed to get credentials:', error.response?.data || error.message);
+    throw new Error('OAuth credentials not available from bridge');
+  }
+}
 
 // Token refresh helpers
 const PADDING_MS = 5 * 60 * 1000; // 5 minutes
@@ -41,9 +57,11 @@ async function refreshAccessToken(installationId) {
   }
 
   try {
+    const credentials = await getBridgeCredentials();
+    
     const body = new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
+      client_id: credentials.client_id,
+      client_secret: credentials.client_secret,
       grant_type: 'refresh_token',
       refresh_token: install.refreshToken
     });
@@ -93,9 +111,9 @@ function scheduleRefresh(installationId) {
 app.get('/', (req, res) => {
   res.json({
     status: 'operational',
-    version: '5.4.2-oauth-fixed',
-    deploymentTimestamp: '2025-06-25T20:12:02.254Z',
-    message: 'GoHighLevel OAuth Backend with Fixed Token Handling',
+    version: '5.4.3-bridge-integrated',
+    message: 'Railway Backend with Replit Bridge Integration',
+    bridge_source: 'replit',
     endpoints: [
       'GET /installations',
       'GET /api/oauth/callback',
@@ -106,7 +124,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// OAuth callback endpoint - FIXED to properly capture tokens
+// OAuth callback endpoint - Uses bridge system for token exchange
 app.get('/api/oauth/callback', async (req, res) => {
   const { code, state } = req.query;
   
@@ -118,13 +136,16 @@ app.get('/api/oauth/callback', async (req, res) => {
   }
 
   try {
+    // Get credentials from bridge
+    const credentials = await getBridgeCredentials();
+    
     // Exchange code for tokens
     const tokenBody = new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
+      client_id: credentials.client_id,
+      client_secret: credentials.client_secret,
       grant_type: 'authorization_code',
       code: code,
-      redirect_uri: REDIRECT_URI
+      redirect_uri: credentials.redirect_uri
     });
 
     const tokenResponse = await axios.post(
@@ -137,7 +158,7 @@ app.get('/api/oauth/callback', async (req, res) => {
     );
 
     const tokens = tokenResponse.data;
-    console.log('[OAUTH] Tokens received:', { 
+    console.log('[OAUTH] Tokens received via bridge:', { 
       access_token: !!tokens.access_token,
       refresh_token: !!tokens.refresh_token,
       expires_in: tokens.expires_in 
@@ -168,27 +189,29 @@ app.get('/api/oauth/callback', async (req, res) => {
       expiresAt: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
       tokenStatus: 'valid',
       scopes: tokens.scope || 'products/prices.write products/prices.readonly products/collection.readonly medias.write medias.readonly locations.readonly contacts.readonly contacts.write products/collection.write users.readonly products.write products.readonly',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      bridgeSource: 'replit'
     };
 
     installations.set(installationId, installation);
     scheduleRefresh(installationId);
 
-    console.log('[OAUTH] Installation created:', installationId);
+    console.log('[OAUTH] Installation created via bridge:', installationId);
 
     // Redirect to success page
     res.redirect(`https://dir.engageautomations.com/oauth-success?installation_id=${installationId}`);
 
   } catch (error) {
-    console.error('[OAUTH] Callback error:', error.response?.data || error.message);
+    console.error('[OAUTH] Bridge callback error:', error.response?.data || error.message);
     res.status(500).json({ 
       error: 'OAuth callback failed',
-      details: error.response?.data || error.message 
+      details: error.response?.data || error.message,
+      bridge_source: 'replit'
     });
   }
 });
 
-// Installations endpoint
+// Installations endpoint with bridge info
 app.get('/installations', (req, res) => {
   const allInstallations = Array.from(installations.values());
   const authenticated = allInstallations.filter(i => i.tokenStatus === 'valid' && i.accessToken);
@@ -196,6 +219,7 @@ app.get('/installations', (req, res) => {
   res.json({
     total: allInstallations.length,
     authenticated: authenticated.length,
+    bridge_source: 'replit',
     installations: allInstallations.map(install => ({
       id: install.id,
       locationId: install.locationId,
@@ -204,7 +228,8 @@ app.get('/installations', (req, res) => {
       expiresAt: install.expiresAt,
       scopes: install.scopes,
       hasAccessToken: !!install.accessToken,
-      hasRefreshToken: !!install.refreshToken
+      hasRefreshToken: !!install.refreshToken,
+      bridgeSource: install.bridgeSource
     }))
   });
 });
@@ -399,33 +424,14 @@ cron.schedule('0 * * * *', () => {
   }
 });
 
-
-// OAuth success page
-app.get('/oauth-success', (req, res) => {
-  const { installation_id } = req.query;
-  
-  if (!installation_id) {
-    return res.status(400).json({ error: 'Installation ID required' });
-  }
-  
-  const install = installations.get(installation_id);
-  if (!install) {
-    return res.status(404).json({ error: 'Installation not found' });
-  }
-  
-  // Serve the success page (you would typically serve the HTML file)
-  res.redirect(`/oauth-success.html?installation_id=${installation_id}`);
-});
-
 // Serve static files
 app.use(express.static('.'));
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`[SERVER] GoHighLevel OAuth Backend v5.4.2-oauth-fixed running on port ${PORT}`);
-  console.log(`[CONFIG] Client ID: ${CLIENT_ID ? 'Set' : 'Missing'}`);
-  console.log(`[CONFIG] Client Secret: ${CLIENT_SECRET ? 'Set' : 'Missing'}`);
-  console.log(`[CONFIG] Redirect URI: ${REDIRECT_URI}`);
+  console.log(`[SERVER] Railway Backend with Bridge Integration v5.4.3 running on port ${PORT}`);
+  console.log(`[BRIDGE] Using Replit bridge at: ${BRIDGE_BASE_URL}`);
+  console.log('[BRIDGE] OAuth credentials will be requested from bridge system');
 });
 
 module.exports = app;
