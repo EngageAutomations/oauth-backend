@@ -17,19 +17,21 @@ let authCount = 0;
 app.use(cors());
 app.use(express.json());
 
+// Root endpoint
 app.get('/', (req, res) => {
   res.json({
     service: 'GoHighLevel OAuth Backend',
-    version: '5.2.0-fixed-credentials',
+    version: '5.3.0-callback-fixed',
     installs: installations.size,
     authenticated: authCount,
     status: 'operational',
     features: ['oauth', 'products', 'images', 'pricing'],
-    debug: 'credentials corrected from attached assets',
+    debug: 'callback routing fixed',
     ts: Date.now()
   });
 });
 
+// Debug endpoint
 app.get('/debug', (req, res) => {
   res.json({
     oauthConfig: {
@@ -41,10 +43,18 @@ app.get('/debug', (req, res) => {
   });
 });
 
+// OAuth callback endpoint - FIXED ROUTING
 app.get('/api/oauth/callback', async (req, res) => {
   const { code, state, error } = req.query;
   
-  console.log('↪️ CALLBACK HIT:', { code: !!code, state, error, timestamp: new Date().toISOString() });
+  console.log('↪️ CALLBACK HIT:', { 
+    code: !!code, 
+    state, 
+    error, 
+    timestamp: new Date().toISOString(),
+    ip: req.ip,
+    userAgent: req.get('User-Agent')
+  });
   
   if (error) {
     console.log('❌ OAUTH ERROR:', error);
@@ -58,6 +68,8 @@ app.get('/api/oauth/callback', async (req, res) => {
   
   try {
     console.log('→ EXCHANGING TOKEN WITH GHL');
+    console.log('→ Using Client ID:', OAUTH_CONFIG.clientId);
+    console.log('→ Using Redirect URI:', OAUTH_CONFIG.redirectUri);
     
     const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
       client_id: OAUTH_CONFIG.clientId,
@@ -107,7 +119,7 @@ app.get('/api/oauth/callback', async (req, res) => {
       }
     }
     
-    console.log('❌ TOKEN EXCHANGE FAILED:', tokenResponse.status);
+    console.log('❌ TOKEN EXCHANGE FAILED:', tokenResponse.status, tokenResponse.data);
     return res.redirect('https://dir.engageautomations.com/?oauth=error&message=Token%20exchange%20failed');
     
   } catch (error) {
@@ -116,6 +128,16 @@ app.get('/api/oauth/callback', async (req, res) => {
   }
 });
 
+// Test callback endpoint
+app.get('/api/oauth/callback/test', (req, res) => {
+  res.json({
+    message: 'OAuth callback endpoint is accessible',
+    timestamp: new Date().toISOString(),
+    path: req.path
+  });
+});
+
+// Installations endpoint
 app.get('/installations', (req, res) => {
   const installationsList = Array.from(installations.values()).map(install => ({
     id: install.id,
@@ -135,6 +157,7 @@ app.get('/installations', (req, res) => {
   });
 });
 
+// Product creation endpoint
 app.post('/api/products/create', async (req, res) => {
   try {
     if (installations.size === 0) {
@@ -179,7 +202,8 @@ app.post('/api/products/create', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 OAuth Backend v5.2.0-fixed-credentials running on port ${PORT}`);
+  console.log(`🚀 OAuth Backend v5.3.0-callback-fixed running on port ${PORT}`);
   console.log(`📋 Client ID: ${OAUTH_CONFIG.clientId}`);
   console.log(`🔗 Redirect URI: ${OAUTH_CONFIG.redirectUri}`);
+  console.log(`🔧 Callback endpoint: /api/oauth/callback`);
 });
