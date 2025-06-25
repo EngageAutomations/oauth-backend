@@ -1,6 +1,6 @@
 {
   "name": "ghl-minimal-backend",
-  "version": "1.4.3-working",
+  "version": "1.4.3-working-final",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -12,5 +12,6 @@
     "passport": "^0.6.0",
     "passport-google-oauth20": "^2.0.0",
     "node-fetch": "^2.6.12"
-  }
+  },
+  "description": "GoHighLevel OAuth Backend - Working Version Restored"
 }
