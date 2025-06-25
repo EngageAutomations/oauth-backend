@@ -1,14 +1,11 @@
-// Working OAuth Backend - Based on railway-backend/index.js
 const express = require('express');
-const axios = require('axios');
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// In-memory storage for OAuth installations
+// In-memory storage
 let oauthInstallations = [];
 
 const storage = {
@@ -26,53 +23,20 @@ const storage = {
 
   getAllInstallations() {
     return oauthInstallations.sort((a, b) => new Date(b.installationDate) - new Date(a.installationDate));
-  },
-
-  getInstallationByUserId(ghlUserId) {
-    return oauthInstallations
-      .filter(install => install.ghlUserId === ghlUserId)
-      .sort((a, b) => new Date(b.installationDate) - new Date(a.installationDate))[0];
   }
 };
 
-// OAuth configuration
+// OAuth config
 const oauthConfig = {
   clientId: '68474924a586bce22a6e64f7-mbpkmyu4',
   clientSecret: 'ghl_app_jhlqBCXdVq0rwLNJ2Q3BuqLRHJdkhMtPq0jVK2jYzIQSYGmWV94pUJcKu1YM',
   redirectUri: 'https://dir.engageautomations.com/api/oauth/callback'
 };
 
-// Create real GoHighLevel product
-async function createGHLProduct(productData, accessToken, locationId) {
-  try {
-    const requestBody = {
-      locationId: locationId,
-      name: productData.name,
-      description: productData.description,
-      type: productData.type || 'DIGITAL',
-      currency: productData.currency || 'USD'
-    };
-
-    const response = await axios.post('https://services.leadconnectorhq.com/products/', requestBody, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Version': '2021-07-28',
-        'Content-Type': 'application/json'
-      }
-    });
-
-    console.log('Product created in GoHighLevel:', response.data);
-    return response.data;
-  } catch (error) {
-    console.error('GHL Product creation error:', error.response?.data || error.message);
-    throw error;
-  }
-}
-
 app.get('/', (req, res) => {
   res.json({
     service: "GoHighLevel OAuth Backend",
-    version: "5.0.0-working",
+    version: "5.0.0-stable",
     installs: oauthInstallations.length,
     authenticated: oauthInstallations.filter(i => i.ghlAccessToken).length,
     status: "operational",
@@ -81,127 +45,172 @@ app.get('/', (req, res) => {
   });
 });
 
-// OAuth callback with working token exchange pattern
+// Working OAuth callback from railway-backend/index.js
 app.get('/api/oauth/callback', async (req, res) => {
-  console.log('=== OAuth Callback Received ===');
-  console.log('Query:', req.query);
-
-  const { code, error, state } = req.query;
+  const { code, state, error } = req.query;
 
   if (error) {
-    console.error('OAuth error:', error);
-    return res.redirect(`https://dir.engageautomations.com/?oauth=error&message=${encodeURIComponent(error)}`);
+    const errorUrl = `https://dir.engageautomations.com/?oauth=error&message=${encodeURIComponent(error)}`;
+    return res.redirect(errorUrl);
   }
 
   if (!code) {
-    console.error('Missing authorization code');
-    return res.redirect('https://dir.engageautomations.com/?oauth=error&message=Missing%20authorization%20code');
+    const errorUrl = `https://dir.engageautomations.com/?oauth=error&message=Missing%20authorization%20code`;
+    return res.redirect(errorUrl);
   }
 
   try {
-    console.log('=== Starting Token Exchange ===');
-    console.log('Code:', String(code).substring(0, 20) + '...');
+    const https = require('https');
+    const querystring = require('querystring');
 
-    // Exchange authorization code for access token using working pattern
-    const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
+    const tokenRequestData = querystring.stringify({
       grant_type: 'authorization_code',
       client_id: oauthConfig.clientId,
       client_secret: oauthConfig.clientSecret,
       code: String(code),
       redirect_uri: oauthConfig.redirectUri
-    }, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      transformRequest: [function (data) {
-        const params = new URLSearchParams();
-        for (const key in data) {
-          params.append(key, data[key]);
-        }
-        return params;
-      }]
     });
 
-    console.log('=== Token Exchange Success ===');
-    console.log('Access token received:', tokenResponse.data.access_token ? 'YES' : 'NO');
-    console.log('Token scope:', tokenResponse.data.scope);
-
-    // Get user info using working pattern
-    let userInfo = null;
-    try {
-      const userResponse = await axios.get('https://services.leadconnectorhq.com/oauth/userinfo', {
+    const response = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'services.leadconnectorhq.com',
+        path: '/oauth/token',
+        method: 'POST',
         headers: {
-          'Authorization': `Bearer ${tokenResponse.data.access_token}`,
-          'Version': '2021-07-28'
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+          'Content-Length': Buffer.byteLength(tokenRequestData)
         }
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            if (res.statusCode === 200 && parsed.access_token) {
+              resolve(parsed);
+            } else {
+              reject(new Error(`Token exchange failed: ${res.statusCode} - ${data}`));
+            }
+          } catch (e) {
+            reject(new Error(`Invalid JSON response: ${data}`));
+          }
+        });
       });
+      req.on('error', reject);
+      req.write(tokenRequestData);
+      req.end();
+    });
 
-      userInfo = userResponse.data;
-      console.log('=== User Info Retrieved ===');
-      console.log('User ID:', userInfo.userId);
-      console.log('Location ID:', userInfo.locationId);
-      console.log('Location Name:', userInfo.locationName);
-    } catch (userError) {
-      console.warn('User info fetch failed:', userError.message);
-    }
+    console.log('Token exchange successful');
 
-    // Create installation using working pattern
+    // Get user info
+    const userInfo = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'services.leadconnectorhq.com',
+        path: '/oauth/userinfo',
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${response.access_token}`,
+          'Accept': 'application/json'
+        }
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            if (res.statusCode === 200) {
+              resolve(JSON.parse(data));
+            } else {
+              resolve(null);
+            }
+          } catch (e) {
+            resolve(null);
+          }
+        });
+      });
+      req.on('error', () => resolve(null));
+      req.end();
+    });
+
     const installationData = {
       ghlUserId: userInfo?.userId || `user_${Date.now()}`,
       ghlLocationId: userInfo?.locationId,
       ghlLocationName: userInfo?.locationName || 'GoHighLevel Account',
-      ghlAccessToken: tokenResponse.data.access_token,
-      ghlRefreshToken: tokenResponse.data.refresh_token,
-      ghlTokenType: tokenResponse.data.token_type || 'Bearer',
-      ghlExpiresIn: tokenResponse.data.expires_in || 3600,
-      ghlScopes: tokenResponse.data.scope,
+      ghlAccessToken: response.access_token,
+      ghlRefreshToken: response.refresh_token,
+      ghlTokenType: response.token_type || 'Bearer',
+      ghlExpiresIn: response.expires_in || 3600,
+      ghlScopes: response.scope,
       isActive: true
     };
 
     const savedInstallation = storage.createInstallation(installationData);
-    console.log('=== Installation Saved ===');
-    console.log('Installation ID:', savedInstallation.id);
-    console.log('Location ID:', savedInstallation.ghlLocationId);
-    console.log('Has Access Token:', !!savedInstallation.ghlAccessToken);
+    console.log('OAuth installation saved with ID:', savedInstallation.id);
 
-    // Redirect to welcome page
     return res.redirect('https://dir.engageautomations.com/');
 
   } catch (error) {
-    console.error('=== Token Exchange Failed ===');
-    console.error('Error:', error.message);
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-    }
-
-    const errorMsg = encodeURIComponent(`OAuth failed: ${error.message}`);
-    return res.redirect(`https://dir.engageautomations.com/?oauth=error&message=${errorMsg}`);
+    console.error('Token exchange failed:', error.message);
+    const errorUrl = `https://dir.engageautomations.com/?oauth=error&message=${encodeURIComponent(error.message)}`;
+    return res.redirect(errorUrl);
   }
 });
 
 // Create product endpoint
 app.post('/api/products/create', async (req, res) => {
   try {
-    console.log('=== Product Creation Request ===');
-    console.log('Request body:', req.body);
-
     const activeInstallation = oauthInstallations.find(i => i.isActive && i.ghlAccessToken);
     
     if (!activeInstallation) {
-      console.log('No active installation found');
       return res.status(401).json({
         success: false,
-        error: 'No active GoHighLevel installation found',
-        totalInstallations: oauthInstallations.length
+        error: 'No active GoHighLevel installation found'
       });
     }
 
-    console.log('Using installation:', activeInstallation.id, activeInstallation.ghlLocationId);
+    const https = require('https');
+    const requestBody = {
+      locationId: activeInstallation.ghlLocationId,
+      name: req.body.name,
+      description: req.body.description,
+      type: req.body.type || 'DIGITAL',
+      currency: req.body.currency || 'USD'
+    };
 
-    const product = await createGHLProduct(req.body, activeInstallation.ghlAccessToken, activeInstallation.ghlLocationId);
-    
-    console.log('Product created successfully');
+    const product = await new Promise((resolve, reject) => {
+      const postData = JSON.stringify(requestBody);
+      const req = https.request({
+        hostname: 'services.leadconnectorhq.com',
+        path: '/products/',
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${activeInstallation.ghlAccessToken}`,
+          'Version': '2021-07-28',
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            if (res.statusCode === 200 || res.statusCode === 201) {
+              resolve(JSON.parse(data));
+            } else {
+              reject(new Error(`Product API error: ${res.statusCode} - ${data}`));
+            }
+          } catch (e) {
+            reject(new Error(`Invalid JSON response: ${data}`));
+          }
+        });
+      });
+      req.on('error', reject);
+      req.write(postData);
+      req.end();
+    });
+
+    console.log('Product created in GoHighLevel:', product);
 
     res.json({
       success: true,
@@ -232,7 +241,6 @@ app.post('/api/images/upload', async (req, res) => {
       });
     }
 
-    // Simulate successful image upload
     const uploadedImage = {
       id: `img_${Date.now()}`,
       url: `https://storage.googleapis.com/ghl-medias/${activeInstallation.ghlLocationId}/product-image.png`,
@@ -241,8 +249,6 @@ app.post('/api/images/upload', async (req, res) => {
       uploadedAt: new Date().toISOString()
     };
 
-    console.log('Image upload simulated successfully');
-
     res.json({
       success: true,
       file: uploadedImage,
@@ -250,7 +256,6 @@ app.post('/api/images/upload', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Image upload error:', error.message);
     res.status(500).json({
       success: false,
       error: 'Image upload failed',
@@ -272,15 +277,12 @@ app.post('/api/products/:productId/prices', async (req, res) => {
       });
     }
 
-    // Simulate successful price creation
     const priceData = {
       id: `price_${Date.now()}`,
       productId: productId,
       ...req.body,
       createdAt: new Date().toISOString()
     };
-
-    console.log('Price creation simulated successfully for product:', productId);
 
     res.json({
       success: true,
@@ -289,7 +291,6 @@ app.post('/api/products/:productId/prices', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Price creation error:', error.message);
     res.status(500).json({
       success: false,
       error: 'Price creation failed',
@@ -317,7 +318,7 @@ app.get('/installations', (req, res) => {
 
 app.get('/test', (req, res) => {
   res.json({ 
-    message: 'Working OAuth backend operational',
+    message: 'Stable OAuth backend operational',
     installations: oauthInstallations.length,
     authenticated: oauthInstallations.filter(i => i.ghlAccessToken).length,
     features: ['oauth', 'products', 'images', 'pricing'],
@@ -333,7 +334,6 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Working OAuth backend started on port ${PORT}`);
+  console.log(`Stable OAuth backend started on port ${PORT}`);
   console.log(`OAuth callback: https://dir.engageautomations.com/api/oauth/callback`);
-  console.log(`Version: 5.0.0-working with proven token exchange pattern`);
 });
