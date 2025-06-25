@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Installation Successful</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            background: white;
+            padding: 3rem;
+            border-radius: 1rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 500px;
+            margin: 2rem;
+        }
+        
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: #10B981;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 2rem;
+            color: white;
+            font-size: 2rem;
+        }
+        
+        h1 {
+            color: #1F2937;
+            margin-bottom: 1rem;
+            font-size: 2rem;
+        }
+        
+        p {
+            color: #6B7280;
+            line-height: 1.6;
+            margin-bottom: 1.5rem;
+        }
+        
+        .installation-id {
+            background: #F3F4F6;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-family: monospace;
+            font-size: 0.9rem;
+            color: #374151;
+            margin: 1.5rem 0;
+            word-break: break-all;
+        }
+        
+        .next-steps {
+            background: #EFF6FF;
+            border: 1px solid #DBEAFE;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            text-align: left;
+        }
+        
+        .next-steps h3 {
+            color: #1E40AF;
+            margin-top: 0;
+            margin-bottom: 1rem;
+        }
+        
+        .next-steps ul {
+            color: #1F2937;
+            padding-left: 1.5rem;
+        }
+        
+        .next-steps li {
+            margin-bottom: 0.5rem;
+        }
+        
+        .button {
+            background: #667eea;
+            color: white;
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 1rem;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            transition: background 0.3s;
+        }
+        
+        .button:hover {
+            background: #5a67d8;
+        }
+        
+        .status-badge {
+            background: #10B981;
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="success-icon">
+            ✓
+        </div>
+        
+        <h1>OAuth Installation Successful!</h1>
+        
+        <p>Your GoHighLevel account has been successfully connected to our marketplace application.</p>
+        
+        <div class="installation-id">
+            <strong>Installation ID:</strong> <span id="installation-id">Loading...</span>
+        </div>
+        
+        <div class="status-badge">
+            Connected & Active
+        </div>
+        
+        <div class="next-steps">
+            <h3>What's Available Now:</h3>
+            <ul>
+                <li><strong>Product Creation:</strong> Create products with images and pricing</li>
+                <li><strong>Media Upload:</strong> Upload images to your GoHighLevel media library</li>
+                <li><strong>Pricing Management:</strong> Add multiple pricing tiers to products</li>
+                <li><strong>Automatic Token Refresh:</strong> Seamless authentication maintenance</li>
+            </ul>
+        </div>
+        
+        <p>You can now return to the application and start creating products with comprehensive pricing options.</p>
+        
+        <a href="#" class="button" onclick="window.close(); return false;">
+            Close Window
+        </a>
+    </div>
+    
+    <script>
+        // Extract installation ID from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const installationId = urlParams.get('installation_id');
+        
+        if (installationId) {
+            document.getElementById('installation-id').textContent = installationId;
+        } else {
+            document.getElementById('installation-id').textContent = 'Not provided';
+        }
+        
+        // Optional: Send success message to parent window
+        if (window.opener) {
+            window.opener.postMessage({
+                type: 'oauth_success',
+                installation_id: installationId
+            }, '*');
+        }
+        
+        // Auto-close after 10 seconds if opened in popup
+        if (window.opener) {
+            setTimeout(() => {
+                window.close();
+            }, 10000);
+        }
+    </script>
+</body>
+</html>
