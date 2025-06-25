@@ -399,6 +399,27 @@ cron.schedule('0 * * * *', () => {
   }
 });
 
+
+// OAuth success page
+app.get('/oauth-success', (req, res) => {
+  const { installation_id } = req.query;
+  
+  if (!installation_id) {
+    return res.status(400).json({ error: 'Installation ID required' });
+  }
+  
+  const install = installations.get(installation_id);
+  if (!install) {
+    return res.status(404).json({ error: 'Installation not found' });
+  }
+  
+  // Serve the success page (you would typically serve the HTML file)
+  res.redirect(`/oauth-success.html?installation_id=${installation_id}`);
+});
+
+// Serve static files
+app.use(express.static('.'));
+
 // Start server
 app.listen(PORT, () => {
   console.log(`[SERVER] GoHighLevel OAuth Backend v5.4.2-oauth-fixed running on port ${PORT}`);
