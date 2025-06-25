@@ -370,6 +370,128 @@ app.post('/api/products/:productId/prices', async (req, res) => {
 });
 
 // Start server
+
+// PRODUCT CREATION ENDPOINT
+app.post('/api/products/create', async (req, res) => {
+  try {
+    const { installation_id, name, description, productType, medias } = req.body;
+    
+    if (!installation_id) {
+      return res.status(400).json({ success: false, error: 'installation_id required' });
+    }
+    
+    const accessToken = await ensureFreshToken(installation_id);
+    const installation = installations.get(installation_id);
+    
+    const productData = {
+      name,
+      description,
+      productType,
+      locationId: installation.locationId
+    };
+    
+    if (medias && medias.length > 0) {
+      productData.medias = medias;
+    }
+    
+    const productResponse = await axios.post('https://services.leadconnectorhq.com/products/', productData, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Version': '2021-07-28',
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    res.json({
+      success: true,
+      product: productResponse.data
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// PRODUCT PRICING ENDPOINT
+app.post('/api/products/:productId/prices', async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { installation_id, name, type, amount, currency } = req.body;
+    
+    if (!installation_id) {
+      return res.status(400).json({ success: false, error: 'installation_id required' });
+    }
+    
+    const accessToken = await ensureFreshToken(installation_id);
+    
+    const priceData = {
+      name,
+      type,
+      amount: parseInt(amount),
+      currency: currency || 'USD'
+    };
+    
+    const priceResponse = await axios.post(`https://services.leadconnectorhq.com/products/${productId}/prices`, priceData, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Version': '2021-07-28',
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    res.json({
+      success: true,
+      price: priceResponse.data
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// PRODUCT LIST ENDPOINT
+app.get('/api/products', async (req, res) => {
+  try {
+    const { installation_id } = req.query;
+    
+    if (!installation_id) {
+      return res.status(400).json({ success: false, error: 'installation_id required' });
+    }
+    
+    const accessToken = await ensureFreshToken(installation_id);
+    const installation = installations.get(installation_id);
+    
+    const productsResponse = await axios.get('https://services.leadconnectorhq.com/products/', {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Version': '2021-07-28'
+      },
+      params: {
+        locationId: installation.locationId,
+        limit: 100
+      }
+    });
+    
+    res.json({
+      success: true,
+      products: productsResponse.data.products || productsResponse.data,
+      total: productsResponse.data.count || productsResponse.data.length
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message
+    });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Enhanced OAuth backend running on port ${port}`);
   console.log(`Version: 5.3.0-complete-workflow`);
