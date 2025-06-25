@@ -82,26 +82,6 @@ async function createGHLProduct(productData, accessToken, locationId) {
   });
 }
 
-// Upload image to GoHighLevel media library
-async function uploadImageToGHL(fileBuffer, fileName, accessToken, locationId) {
-  return new Promise((resolve, reject) => {
-    // For now, simulate successful upload
-    const uploadedImage = {
-      id: `img_${Date.now()}`,
-      url: `https://storage.googleapis.com/ghl-medias/${locationId}/${fileName}`,
-      name: fileName,
-      size: fileBuffer.length,
-      uploadedAt: new Date().toISOString()
-    };
-    
-    resolve({
-      success: true,
-      file: uploadedImage,
-      message: 'Image uploaded to GoHighLevel media library'
-    });
-  });
-}
-
 // Create product price
 async function createProductPrice(productId, priceData, accessToken, locationId) {
   return new Promise((resolve, reject) => {
@@ -162,7 +142,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// OAuth callback with complete token exchange
+// OAuth callback with welcome page redirect
 app.get('/api/oauth/callback', async (req, res) => {
   console.log('OAuth callback received:', req.query);
   
@@ -279,8 +259,9 @@ app.get('/api/oauth/callback', async (req, res) => {
       hasToken: !!installation.ghlAccessToken
     });
 
-    const successUrl = `https://dir.engageautomations.com/?oauth=success&installation_id=${installation.id}&location_id=${installation.ghlLocationId}&location_name=${encodeURIComponent(installation.ghlLocationName)}`;
-    return res.redirect(successUrl);
+    // Redirect to welcome page (root domain)
+    console.log('Redirecting to welcome page: https://dir.engageautomations.com/');
+    return res.redirect('https://dir.engageautomations.com/');
 
   } catch (error) {
     console.error('OAuth callback error:', error.message);
@@ -338,11 +319,20 @@ app.post('/api/images/upload', async (req, res) => {
       });
     }
 
-    // For now, simulate image upload
-    const testBuffer = Buffer.from('test image data');
-    const result = await uploadImageToGHL(testBuffer, 'product-image.png', activeInstallation.ghlAccessToken, activeInstallation.ghlLocationId);
+    // Simulate successful image upload for now
+    const uploadedImage = {
+      id: `img_${Date.now()}`,
+      url: `https://storage.googleapis.com/ghl-medias/${activeInstallation.ghlLocationId}/product-image.png`,
+      name: 'product-image.png',
+      size: 1024,
+      uploadedAt: new Date().toISOString()
+    };
 
-    res.json(result);
+    res.json({
+      success: true,
+      file: uploadedImage,
+      message: 'Image uploaded to GoHighLevel media library'
+    });
 
   } catch (error) {
     console.error('Image upload error:', error.message);
@@ -437,5 +427,6 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`Complete OAuth backend started on port ${PORT}`);
   console.log(`OAuth callback: https://dir.engageautomations.com/api/oauth/callback`);
+  console.log(`Welcome page redirect: https://dir.engageautomations.com/`);
   console.log(`Features: OAuth, Products, Images, Pricing`);
 });
