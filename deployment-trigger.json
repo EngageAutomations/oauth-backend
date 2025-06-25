@@ -1,0 +1,7 @@
+{
+  "timestamp": "2025-06-25T20:12:01.556Z",
+  "trigger": "force-oauth-backend-update",
+  "version": "5.4.2-oauth-fixed",
+  "commit": "fe95fa6f2d1c095b4fe91f6dda44005d6e891e97",
+  "reason": "Railway deployment stuck on old version"
+}
