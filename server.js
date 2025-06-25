@@ -1,329 +1,275 @@
+// Railway OAuth Backend with Bridge System
+// GitHub: https://github.com/EngageAutomations/oauth-backend
 const express = require('express');
-const cors = require('cors');
-const session = require('express-session');
-const passport = require('passport');
-const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const axios = require('axios');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
-// OAuth credentials
-const CLIENT_ID = '68474924a586bce22a6e64f7-mbpkmyu4';
-const CLIENT_SECRET = 'b5a7a120-7df7-4d23-8796-4863cbd08f94';
-const REDIRECT_URI = 'https://dir.engageautomations.com/oauth/callback';
+// Bridge configuration
+const BRIDGE_BASE_URL = 'https://gohighlevel-oauth-marketplace-application.replit.app';
+let cachedCredentials = null;
 
-// Middleware
-app.use(cors({
-  origin: ['https://listings.engageautomations.com', 'http://localhost:3000', 'http://localhost:5000'],
-  credentials: true
-}));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Session configuration
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'ghl-secret',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { 
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 24 * 60 * 60 * 1000
-  }
-}));
+// Storage
+let oauthInstallations = [];
 
-app.use(passport.initialize());
-app.use(passport.session());
-
-// OAuth installation storage
-const installations = new Map();
-const tokensByLocationId = new Map();
-
-// Passport OAuth strategy
-passport.use(new GoogleStrategy({
-  clientID: CLIENT_ID,
-  clientSecret: CLIENT_SECRET,
-  callbackURL: REDIRECT_URI,
-  scope: [
-    'contacts.readonly', 'contacts.write',
-    'locations.readonly', 'locations.write',
-    'products.readonly', 'products.write'
-  ]
-}, async (accessToken, refreshToken, profile, done) => {
-  try {
-    console.log('OAuth callback received');
-    
+const storage = {
+  createInstallation(installationData) {
     const installation = {
-      id: `install_${Date.now()}`,
-      ghlUserId: profile.id,
-      ghlUserEmail: profile.emails?.[0]?.value,
-      ghlUserName: profile.displayName,
-      ghlAccessToken: accessToken,
-      ghlRefreshToken: refreshToken,
-      ghlLocationId: profile.locationId || 'default-location',
-      installationDate: new Date().toISOString(),
-      isActive: true
+      id: oauthInstallations.length + 1,
+      ...installationData,
+      installationDate: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date()
     };
-    
-    installations.set(installation.id, installation);
-    tokensByLocationId.set(installation.ghlLocationId, {
-      accessToken,
-      refreshToken,
-      locationId: installation.ghlLocationId,
-      installationId: installation.id
+    oauthInstallations.push(installation);
+    return installation;
+  },
+
+  getAllInstallations() {
+    return oauthInstallations.sort((a, b) => new Date(b.installationDate) - new Date(a.installationDate));
+  },
+
+  getInstallationByUserId(ghlUserId) {
+    return oauthInstallations
+      .filter(install => install.ghlUserId === ghlUserId)
+      .sort((a, b) => new Date(b.installationDate) - new Date(a.installationDate))[0];
+  }
+};
+
+// Get OAuth credentials from bridge
+async function getOAuthCredentials() {
+  if (cachedCredentials && cachedCredentials.expires > Date.now()) {
+    return cachedCredentials.data;
+  }
+
+  try {
+    const response = await axios.get(`${BRIDGE_BASE_URL}/api/bridge/oauth-credentials`, { 
+      timeout: 10000,
+      headers: { 'Accept': 'application/json' }
     });
     
-    console.log('OAuth installation completed:', installation.id);
-    
-    return done(null, installation);
-  } catch (error) {
-    console.error('OAuth strategy error:', error);
-    return done(error, null);
-  }
-}));
-
-passport.serializeUser((user, done) => done(null, user.id));
-passport.deserializeUser((id, done) => {
-  const installation = installations.get(id);
-  done(null, installation);
-});
-
-// Helper function for GoHighLevel API requests
-async function makeGHLRequest(endpoint, options = {}) {
-  const tokenData = Array.from(tokensByLocationId.values())[0];
-  if (!tokenData) {
-    throw new Error('No OAuth installation found');
-  }
-  
-  const { accessToken, locationId } = tokenData;
-  
-  // Ensure locationId is in the endpoint
-  const separator = endpoint.includes('?') ? '&' : '?';
-  const fullEndpoint = endpoint.includes('locationId') 
-    ? endpoint 
-    : `${endpoint}${separator}locationId=${locationId}`;
-  
-  console.log('Making GHL request to:', fullEndpoint);
-  
-  const fetch = require('node-fetch');
-  const response = await fetch(`https://services.leadconnectorhq.com${fullEndpoint}`, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      'Version': '2021-07-28',
-      ...options.headers
+    if (response.data.success) {
+      cachedCredentials = {
+        data: response.data.credentials,
+        expires: Date.now() + (5 * 60 * 1000)
+      };
+      return response.data.credentials;
     }
-  });
-  
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('GHL API Error:', response.status, errorText);
-    throw new Error(`GHL API Error: ${response.status} - ${errorText}`);
+    throw new Error('Bridge credentials request failed');
+  } catch (error) {
+    console.error('Bridge error:', error.message);
+    throw error;
   }
-  
-  return response.json();
 }
 
-// Root endpoint
+// Routes
 app.get('/', (req, res) => {
   res.json({
-    service: 'GoHighLevel Product API',
-    version: '2.1.0-stable',
-    installs: installations.size,
-    authenticated: tokensByLocationId.size,
-    status: 'operational',
-    features: ['product-creation', 'product-listing', 'oauth-integration'],
+    service: "GoHighLevel OAuth Backend",
+    version: "2.2.0-bridge-integrated",
+    installs: oauthInstallations.length,
+    authenticated: oauthInstallations.filter(i => i.isActive).length,
+    status: "operational",
+    features: ["oauth-integration", "bridge-system"],
+    bridge_system: "replit-integration",
     ts: Date.now()
   });
 });
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ 
-    ok: true, 
-    service: 'ghl-products-stable',
-    version: '2.1.0-stable',
-    installations: installations.size,
-    authenticated: tokensByLocationId.size,
-    ts: Date.now() 
-  });
-});
-
-// OAuth routes
-app.get('/oauth/start', passport.authenticate('google'));
-
-app.get('/oauth/callback', 
-  passport.authenticate('google', { failureRedirect: '/oauth/error' }),
-  (req, res) => {
-    console.log('OAuth callback successful');
-    res.redirect('https://listings.engageautomations.com/?installation=success');
-  }
-);
-
-app.get('/oauth/error', (req, res) => {
-  console.log('OAuth error occurred');
-  res.redirect('https://listings.engageautomations.com/?installation=error');
-});
-
-// List all products
-app.get('/products', async (req, res) => {
-  try {
-    console.log('Fetching products from GoHighLevel...');
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = parseInt(req.query.offset) || 0;
-    
-    const products = await makeGHLRequest(`/products?limit=${limit}&offset=${offset}`);
-    
-    console.log(`Found ${products.products?.length || 0} products`);
-    
-    res.json({
-      success: true,
-      products: products.products || [],
-      total: products.total || 0,
-      limit,
-      offset
-    });
-  } catch (error) {
-    console.error('Error fetching products:', error.message);
-    res.status(500).json({ 
-      success: false,
-      error: error.message,
-      products: [],
-      total: 0
-    });
-  }
-});
-
-// Create product
-app.post('/products', async (req, res) => {
-  try {
-    console.log('Creating product in GoHighLevel...');
-    console.log('Product data:', req.body);
-    
-    const productData = {
-      name: req.body.name || 'New Product',
-      description: req.body.description || '',
-      type: req.body.type || 'DIGITAL',
-      price: Math.round((req.body.price || 0) * 100), // Convert to cents
-      currency: req.body.currency || 'USD'
-    };
-    
-    if (req.body.sku) {
-      productData.sku = req.body.sku;
-    }
-    
-    console.log('Formatted product data:', productData);
-    
-    const product = await makeGHLRequest('/products', {
-      method: 'POST',
-      body: JSON.stringify(productData)
-    });
-    
-    console.log('Product created successfully:', product.id);
-    
-    res.status(201).json({
-      success: true,
-      product,
-      message: 'Product created successfully in GoHighLevel'
-    });
-  } catch (error) {
-    console.error('Product creation error:', error.message);
-    res.status(500).json({ 
-      success: false,
-      error: error.message 
-    });
-  }
-});
-
-// Get specific product
-app.get('/products/:id', async (req, res) => {
-  try {
-    console.log(`Fetching product ${req.params.id} from GoHighLevel...`);
-    
-    const product = await makeGHLRequest(`/products/${req.params.id}`);
-    
-    res.json({
-      success: true,
-      product
-    });
-  } catch (error) {
-    console.error('Error fetching product:', error.message);
-    res.status(500).json({ 
-      success: false,
-      error: error.message 
-    });
-  }
-});
-
-// Update product
-app.put('/products/:id', async (req, res) => {
-  try {
-    console.log(`Updating product ${req.params.id} in GoHighLevel...`);
-    
-    const updateData = { ...req.body };
-    if (updateData.price) {
-      updateData.price = Math.round(updateData.price * 100);
-    }
-    
-    const product = await makeGHLRequest(`/products/${req.params.id}`, {
-      method: 'PUT',
-      body: JSON.stringify(updateData)
-    });
-    
-    console.log('Product updated successfully');
-    
-    res.json({
-      success: true,
-      product,
-      message: 'Product updated successfully'
-    });
-  } catch (error) {
-    console.error('Product update error:', error.message);
-    res.status(500).json({ 
-      success: false,
-      error: error.message 
-    });
-  }
-});
-
-// Delete product
-app.delete('/products/:id', async (req, res) => {
-  try {
-    console.log(`Deleting product ${req.params.id} from GoHighLevel...`);
-    
-    await makeGHLRequest(`/products/${req.params.id}`, {
-      method: 'DELETE'
-    });
-    
-    console.log('Product deleted successfully');
-    
-    res.json({
-      success: true,
-      message: 'Product deleted successfully'
-    });
-  } catch (error) {
-    console.error('Product deletion error:', error.message);
-    res.status(500).json({ 
-      success: false,
-      error: error.message 
-    });
-  }
-});
-
-// Installation status
 app.get('/installations', (req, res) => {
-  const installList = Array.from(installations.values());
   res.json({
-    total: installations.size,
-    installations: installList,
-    authenticated: tokensByLocationId.size
+    total: oauthInstallations.length,
+    installations: oauthInstallations.map(install => ({
+      id: install.id,
+      ghlUserId: install.ghlUserId,
+      ghlLocationId: install.ghlLocationId,
+      ghlLocationName: install.ghlLocationName,
+      isActive: install.isActive,
+      installationDate: install.installationDate
+    })),
+    authenticated: oauthInstallations.filter(i => i.isActive).length
   });
 });
 
-// Start server
+app.get('/api/oauth/url', async (req, res) => {
+  try {
+    const credentials = await getOAuthCredentials();
+    
+    const scopes = 'locations.readonly locations.write contacts.readonly contacts.write opportunities.readonly opportunities.write products.readonly products.write medias.readonly medias.write';
+    const state = `oauth_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const authUrl = `https://marketplace.leadconnectorhq.com/oauth/chooselocation?response_type=code&redirect_uri=${encodeURIComponent(credentials.redirect_uri)}&client_id=${credentials.client_id}&state=${state}&scope=${encodeURIComponent(scopes)}`;
+    
+    res.json({
+      success: true,
+      authUrl: authUrl,
+      state: state,
+      clientId: credentials.client_id,
+      redirectUri: credentials.redirect_uri,
+      bridge_source: 'replit'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate OAuth URL',
+      message: error.message
+    });
+  }
+});
+
+// OAuth callback - FIXED
+app.get('/api/oauth/callback', async (req, res) => {
+  console.log('=== OAUTH CALLBACK RECEIVED ===');
+  console.log('Query params:', req.query);
+  
+  const { code, state, error } = req.query;
+
+  if (error) {
+    console.error('OAuth error:', error);
+    const errorUrl = `https://dir.engageautomations.com/?oauth=error&message=${encodeURIComponent(error)}`;
+    return res.redirect(errorUrl);
+  }
+
+  if (!code) {
+    console.error('Missing authorization code');
+    const errorUrl = `https://dir.engageautomations.com/?oauth=error&message=${encodeURIComponent('Missing authorization code')}`;
+    return res.redirect(errorUrl);
+  }
+
+  try {
+    console.log('=== TOKEN EXCHANGE STARTING ===');
+    
+    const credentials = await getOAuthCredentials();
+    
+    const tokenRequestData = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: credentials.client_id,
+      client_secret: credentials.client_secret,
+      code: String(code),
+      redirect_uri: credentials.redirect_uri
+    });
+
+    console.log('Making token request to GoHighLevel...');
+    
+    const response = await axios.post('https://services.leadconnectorhq.com/oauth/token', 
+      tokenRequestData.toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+
+    console.log('=== TOKEN EXCHANGE SUCCESS ===');
+    console.log('Access token received:', response.data.access_token ? 'YES' : 'NO');
+
+    // Get user info
+    let userInfo = null;
+    try {
+      const userResponse = await axios.get('https://services.leadconnectorhq.com/oauth/userinfo', {
+        headers: { 'Authorization': `Bearer ${response.data.access_token}` },
+        timeout: 10000
+      });
+      userInfo = userResponse.data;
+      console.log('User info retrieved - Location ID:', userInfo.locationId);
+    } catch (userError) {
+      console.warn('Failed to get user info:', userError.message);
+    }
+
+    // Store installation
+    const installationData = {
+      ghlUserId: userInfo?.userId || `user_${Date.now()}`,
+      ghlLocationId: userInfo?.locationId,
+      ghlLocationName: userInfo?.locationName || 'GoHighLevel Account',
+      ghlAccessToken: response.data.access_token,
+      ghlRefreshToken: response.data.refresh_token,
+      ghlTokenType: response.data.token_type || 'Bearer',
+      ghlExpiresIn: response.data.expires_in || 3600,
+      ghlScopes: response.data.scope,
+      isActive: true,
+      bridgeSource: 'replit'
+    };
+
+    const savedInstallation = storage.createInstallation(installationData);
+    console.log('=== INSTALLATION SAVED ===');
+    console.log('Installation ID:', savedInstallation.id);
+    console.log('Location ID:', savedInstallation.ghlLocationId);
+
+    const successUrl = `https://dir.engageautomations.com/?oauth=success&installation_id=${savedInstallation.id}&location_id=${userInfo?.locationId || 'unknown'}`;
+    console.log('Redirecting to success URL:', successUrl);
+    
+    return res.redirect(successUrl);
+
+  } catch (error) {
+    console.error('=== TOKEN EXCHANGE FAILED ===');
+    console.error('Error:', error.message);
+    
+    if (axios.isAxiosError(error)) {
+      console.error('Response status:', error.response?.status);
+      console.error('Response data:', error.response?.data);
+    }
+
+    const errorMsg = encodeURIComponent('OAuth failed: ' + error.message);
+    const errorUrl = `https://dir.engageautomations.com/?oauth=error&message=${errorMsg}`;
+    return res.redirect(errorUrl);
+  }
+});
+
+app.get('/test', (req, res) => {
+  res.json({ 
+    message: 'Railway bridge backend working!', 
+    timestamp: new Date().toISOString(),
+    installations: oauthInstallations.length,
+    bridge_system: 'active'
+  });
+});
+
+app.get('/health', async (req, res) => {
+  try {
+    const credentials = await getOAuthCredentials();
+    res.json({
+      status: 'healthy',
+      bridge_connection: 'working',
+      credentials_available: !!credentials.client_id,
+      installations: oauthInstallations.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'unhealthy',
+      bridge_connection: 'failed',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+app.use((req, res) => {
+  res.status(404).json({ 
+    error: 'Not found',
+    path: req.path,
+    method: req.method,
+    availableEndpoints: [
+      'GET /',
+      'GET /installations', 
+      'GET /api/oauth/callback',
+      'GET /api/oauth/url',
+      'GET /test',
+      'GET /health'
+    ]
+  });
+});
+
 app.listen(PORT, () => {
-  console.log(`GoHighLevel Product API Server running on port ${PORT}`);
-  console.log('Version: 2.1.0-stable');
-  console.log('OAuth installations:', tokensByLocationId.size);
-  console.log('Server started successfully');
+  console.log(`=== RAILWAY BRIDGE BACKEND STARTED ===`);
+  console.log(`Port: ${PORT}`);
+  console.log(`Bridge System: Replit Integration`);
+  console.log(`Callback URL: https://dir.engageautomations.com/api/oauth/callback`);
+  console.log(`Bridge URL: ${BRIDGE_BASE_URL}`);
+  console.log(`Version: 2.2.0-bridge-integrated`);
 });
