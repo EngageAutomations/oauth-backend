@@ -1,25 +1,32 @@
-/* Railway OAuth Backend with Hardcoded Bridge URL
- * Version: 6.2.0-bridge-final
- * Bridge URL: https://62a303e9-3e97-4c9f-a7b4-c0026049fd6d-00-30skmv0mqe63e.janeway.replit.dev
+/* Railway OAuth Backend - Self-Contained
+ * Version: 7.0.0-self-contained
+ * No external bridge dependency
  */
 
 const express = require('express');
 const axios = require('axios');
 const app = express();
 
-// Hardcoded bridge URL
-const BRIDGE_URL = 'https://62a303e9-3e97-4c9f-a7b4-c0026049fd6d-00-30skmv0mqe63e.janeway.replit.dev';
-
 app.use(express.json());
+
+// OAuth credentials embedded directly in code
+const OAUTH_CONFIG = {
+  clientId: process.env.GHL_CLIENT_ID || '67671c52e4b0b29a36063fb6',
+  clientSecret: process.env.GHL_CLIENT_SECRET || '72e0e7c4-ee9d-4bad-a6fb-2b6b49bb6b7b',
+  redirectBase: 'https://dir.engageautomations.com'
+};
+
+// In-memory installation storage
+const installations = new Map();
 
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
     status: 'operational',
-    version: '6.2.0-bridge-final',
-    message: 'Railway Backend with Hardcoded Bridge URL',
-    bridge_architecture: true,
-    bridge_url: BRIDGE_URL,
+    version: '7.0.0-self-contained',
+    message: 'Self-Contained OAuth Backend',
+    oauth_embedded: true,
+    installs: installations.size,
     endpoints: [
       'GET /installations',
       'GET /api/oauth/callback',
@@ -33,62 +40,100 @@ app.get('/', (req, res) => {
 // Installations endpoint
 app.get('/installations', (req, res) => {
   res.json({
-    total: 0,
-    authenticated: 0,
-    bridge_architecture: true,
-    bridge_url: BRIDGE_URL,
-    installations: []
+    total: installations.size,
+    authenticated: installations.size,
+    oauth_embedded: true,
+    installations: Array.from(installations.values())
   });
 });
 
 // OAuth callback endpoint
 app.get('/api/oauth/callback', async (req, res) => {
-  const { code } = req.query;
+  const { code, locationId } = req.query;
   
   if (!code) {
     return res.status(400).json({ error: 'Authorization code required' });
   }
   
   try {
-    // Fetch OAuth credentials from bridge
-    const credentialsResponse = await axios.get(`${BRIDGE_URL}/api/bridge/oauth-credentials`);
-    const { clientId, clientSecret, redirectBase } = credentialsResponse.data;
+    console.log('Processing OAuth callback with embedded credentials');
     
-    if (!clientId || !clientSecret) {
-      throw new Error('Bridge credentials not available');
-    }
-    
-    // Exchange code for tokens
+    // Exchange code for tokens using embedded credentials
     const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: OAUTH_CONFIG.clientId,
+      client_secret: OAUTH_CONFIG.clientSecret,
       grant_type: 'authorization_code',
       code: code,
-      redirect_uri: `${redirectBase}/api/oauth/callback`
+      redirect_uri: `${OAUTH_CONFIG.redirectBase}/api/oauth/callback`
     });
     
-    const { access_token, refresh_token } = tokenResponse.data;
+    const { access_token, refresh_token, scope } = tokenResponse.data;
     
-    // For now, just return success
+    // Store installation
+    const installationId = locationId || Date.now().toString();
+    const installation = {
+      id: installationId,
+      locationId: locationId,
+      accessToken: access_token,
+      refreshToken: refresh_token,
+      scope: scope,
+      createdAt: new Date().toISOString()
+    };
+    
+    installations.set(installationId, installation);
+    
+    console.log(`OAuth installation completed: ${installationId}`);
+    
     res.json({
       success: true,
-      message: 'OAuth installation completed',
-      bridge_url: BRIDGE_URL,
+      message: 'OAuth installation completed successfully',
+      installationId: installationId,
+      locationId: locationId,
+      scope: scope,
       timestamp: new Date().toISOString()
     });
     
   } catch (error) {
-    console.error('OAuth callback error:', error.message);
+    console.error('OAuth callback error:', error.response?.data || error.message);
     res.status(500).json({
       error: 'OAuth callback failed',
       message: error.message,
-      bridge_url: BRIDGE_URL
+      details: error.response?.data
+    });
+  }
+});
+
+// Product creation endpoint
+app.post('/api/products/create', async (req, res) => {
+  try {
+    const { locationId, ...productData } = req.body;
+    
+    // Get installation
+    const installation = Array.from(installations.values()).find(inst => inst.locationId === locationId);
+    if (!installation) {
+      return res.status(401).json({ error: 'OAuth installation required' });
+    }
+    
+    // Create product in GoHighLevel
+    const response = await axios.post(`https://services.leadconnectorhq.com/products/`, productData, {
+      headers: {
+        'Authorization': `Bearer ${installation.accessToken}`,
+        'Version': '2021-07-28'
+      }
+    });
+    
+    res.json(response.data);
+    
+  } catch (error) {
+    res.status(500).json({
+      error: 'Product creation failed',
+      message: error.message
     });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Railway OAuth Backend running on port ${PORT}`);
-  console.log(`Bridge URL: ${BRIDGE_URL}`);
+  console.log(`Self-Contained OAuth Backend running on port ${PORT}`);
+  console.log(`OAuth Client ID: ${OAUTH_CONFIG.clientId}`);
 });
