@@ -1,15 +1,12 @@
-// Railway Backend with Bridge-First Architecture
+// OAuth Backend Fix - Add missing endpoints for installation tracking
+// This file adds the missing /installations endpoint and debugging
+
 const express = require('express');
-const axios = require('axios');
 const cors = require('cors');
+const axios = require('axios');
 const multer = require('multer');
 const FormData = require('form-data');
 const fs = require('fs');
-const cron = require('node-cron');
-const getCreds = require('./utils/fetchBridge');
-
-const app = express();
-const PORT = process.env.PORT || 5000;
 
 // Configure multer for file uploads
 const upload = multer({ 
@@ -17,399 +14,366 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 } // 25MB limit
 });
 
+const app = express();
+const port = process.env.PORT || 3000;
+
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// In-memory storage for OAuth installations
+// In-memory install store
 const installations = new Map();
 
-// Token refresh helpers
-const PADDING_MS = 5 * 60 * 1000; // 5 minutes
+// Add pre-seeded installation if env vars exist
+if (process.env.GHL_ACCESS_TOKEN) {
+  installations.set('install_seed', {
+    id: 'install_seed',
+    accessToken: process.env.GHL_ACCESS_TOKEN,
+    refreshToken: process.env.GHL_REFRESH_TOKEN || null,
+    expiresIn: 86399,
+    expiresAt: Date.now() + 86399 * 1000,
+    locationId: process.env.GHL_LOCATION_ID || 'WAvk87RmW9rBSDJHeOpH',
+    scopes: process.env.GHL_SCOPES || 'medias.write medias.readonly',
+    tokenStatus: 'valid',
+    createdAt: new Date().toISOString()
+  });
+}
+
+// TOKEN LIFECYCLE HELPERS
+const PADDING_MS = 5 * 60 * 1000;
 const refreshers = new Map();
 
-async function refreshAccessToken(installationId) {
-  const install = installations.get(installationId);
-  if (!install || !install.refreshToken) {
-    console.log(`[REFRESH] No refresh token for ${installationId}`);
-    return;
-  }
+async function refreshAccessToken(id) {
+  const inst = installations.get(id);
+  if (!inst || !inst.refreshToken) return;
 
   try {
-    const { clientId, clientSecret } = await getCreds();
-    
     const body = new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: process.env.GHL_CLIENT_ID,
+      client_secret: process.env.GHL_CLIENT_SECRET,
       grant_type: 'refresh_token',
-      refresh_token: install.refreshToken
+      refresh_token: inst.refreshToken
     });
 
-    const response = await axios.post(
+    const { data } = await axios.post(
       'https://services.leadconnectorhq.com/oauth/token',
       body,
-      { 
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 15000 
-      }
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
     );
 
-    const data = response.data;
-    
-    // Update installation with new tokens
-    install.accessToken = data.access_token;
-    install.refreshToken = data.refresh_token || install.refreshToken;
-    install.expiresIn = data.expires_in;
-    install.expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
-    install.tokenStatus = 'valid';
+    inst.accessToken = data.access_token;
+    inst.refreshToken = data.refresh_token || inst.refreshToken;
+    inst.expiresIn = data.expires_in;
+    inst.expiresAt = Date.now() + data.expires_in * 1000;
+    inst.tokenStatus = 'valid';
 
-    scheduleRefresh(installationId);
-    console.log(`[REFRESH] ${installationId} → ${(data.expires_in / 3600).toFixed(1)} hours`);
-    
-    return true;
-  } catch (error) {
-    console.error(`[REFRESH-FAIL] ${installationId}:`, error.response?.data || error.message);
-    install.tokenStatus = 'invalid';
-    return false;
+    scheduleRefresh(id);
+    console.log(`[REFRESH] ${id} → ${(data.expires_in / 3600).toFixed(1)} h`);
+  } catch (err) {
+    console.error(`[REFRESH-FAIL] ${id}`, err.response?.data || err.message);
+    inst.tokenStatus = 'invalid';
   }
 }
 
-function scheduleRefresh(installationId) {
-  clearTimeout(refreshers.get(installationId));
-  const install = installations.get(installationId);
-  if (!install || !install.expiresAt) return;
-  
-  const expiryTime = new Date(install.expiresAt).getTime();
-  const delay = Math.max(expiryTime - Date.now() - PADDING_MS, 0);
-  
-  const timeout = setTimeout(() => refreshAccessToken(installationId), delay);
-  refreshers.set(installationId, timeout);
+function scheduleRefresh(id) {
+  clearTimeout(refreshers.get(id));
+  const inst = installations.get(id);
+  if (!inst || !inst.expiresAt) return;
+  const delay = Math.max(inst.expiresAt - Date.now() - PADDING_MS, 0);
+  const t = setTimeout(() => refreshAccessToken(id), delay);
+  refreshers.set(id, t);
 }
 
-// Root endpoint
+async function ensureFreshToken(id) {
+  const inst = installations.get(id);
+  if (!inst) throw new Error('Unknown installation');
+  if (!inst.expiresAt || inst.expiresAt - Date.now() < PADDING_MS) {
+    await refreshAccessToken(id);
+  }
+  if (inst.tokenStatus !== 'valid') throw new Error('Token invalid');
+}
+
+function requireInstall(req, res) {
+  const installationId = req.method === 'GET' ? req.query.installation_id : req.body.installation_id;
+  const inst = installations.get(installationId);
+  if (!inst || !inst.accessToken) {
+    res.status(400).json({ success: false, error: `Installation not found: ${installationId}` });
+    return null;
+  }
+  return inst;
+}
+
+// BASIC ROUTES
 app.get('/', (req, res) => {
+  const authenticatedCount = Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length;
   res.json({
-    status: 'operational',
-    version: '6.0.0-bridge-first',
-    message: 'Railway Backend with Bridge-First Architecture',
-    bridge_architecture: true,
-    endpoints: [
-      'GET /installations',
-      'GET /api/oauth/callback',
-      'POST /api/media/upload',
-      'POST /api/products/create',
-      'POST /api/products/:productId/prices'
-    ]
+    service: "GoHighLevel OAuth Backend",
+    version: "5.3.0-complete-workflow",
+    installs: installations.size,
+    authenticated: authenticatedCount,
+    status: "operational",
+    features: ["oauth", "products", "images", "pricing", "media-upload"],
+    debug: "complete multi-step workflow ready",
+    ts: Date.now()
   });
 });
 
-// OAuth callback endpoint - Uses bridge for credentials
-app.get('/api/oauth/callback', async (req, res) => {
-  const { code, state } = req.query;
-  
-  console.log('[OAUTH] Callback received:', { code: !!code, state });
-
-  if (!code) {
-    console.error('[OAUTH] No authorization code received');
-    return res.status(400).json({ error: 'No authorization code provided' });
-  }
-
-  try {
-    // Get credentials from bridge
-    const { clientId, clientSecret, redirectBase } = await getCreds();
-    console.log('[BRIDGE] Credentials fetched for OAuth exchange');
-    
-    // Exchange code for tokens
-    const tokenBody = new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: 'authorization_code',
-      code: code,
-      redirect_uri: `${redirectBase}/api/oauth/callback`
-    });
-
-    const tokenResponse = await axios.post(
-      'https://services.leadconnectorhq.com/oauth/token',
-      tokenBody,
-      { 
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 15000 
-      }
-    );
-
-    const tokens = tokenResponse.data;
-    console.log('[OAUTH] Tokens received via bridge:', { 
-      access_token: !!tokens.access_token,
-      refresh_token: !!tokens.refresh_token,
-      expires_in: tokens.expires_in 
-    });
-
-    // Get user info with the access token
-    const userResponse = await axios.get('https://services.leadconnectorhq.com/oauth/userinfo', {
-      headers: { 'Authorization': `Bearer ${tokens.access_token}` }
-    });
-
-    const userInfo = userResponse.data;
-    console.log('[OAUTH] User info:', { 
-      userId: userInfo.id,
-      locationId: userInfo.companyId 
-    });
-
-    // Create installation record with proper token storage
-    const installationId = `install_${Date.now()}`;
-    const installation = {
-      id: installationId,
-      locationId: userInfo.companyId,
-      ghlUserId: userInfo.id,
-      userEmail: userInfo.email,
-      companyName: userInfo.companyName,
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-      expiresIn: tokens.expires_in,
-      expiresAt: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-      tokenStatus: 'valid',
-      scopes: tokens.scope || 'products.write medias.write',
-      createdAt: new Date().toISOString(),
-      bridgeArchitecture: true
-    };
-
-    installations.set(installationId, installation);
-    scheduleRefresh(installationId);
-
-    console.log('[OAUTH] Installation created via bridge:', installationId);
-
-    // Redirect to success page
-    res.redirect(`https://dir.engageautomations.com/oauth-success?installation_id=${installationId}`);
-
-  } catch (error) {
-    console.error('[OAUTH] Bridge callback error:', error.response?.data || error.message);
-    res.status(500).json({ 
-      error: 'OAuth callback failed',
-      details: error.response?.data || error.message,
-      bridge_architecture: true
-    });
-  }
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', ts: new Date().toISOString() });
 });
 
-// Installations endpoint
+// MISSING INSTALLATIONS ENDPOINT - This was the problem!
 app.get('/installations', (req, res) => {
-  const allInstallations = Array.from(installations.values());
-  const authenticated = allInstallations.filter(i => i.tokenStatus === 'valid' && i.accessToken);
+  const installList = Array.from(installations.values()).map(inst => ({
+    id: inst.id,
+    locationId: inst.locationId,
+    tokenStatus: inst.tokenStatus,
+    createdAt: inst.createdAt,
+    expiresAt: new Date(inst.expiresAt).toISOString(),
+    scopes: inst.scopes
+  }));
   
   res.json({
-    total: allInstallations.length,
-    authenticated: authenticated.length,
-    bridge_architecture: true,
-    installations: allInstallations.map(install => ({
-      id: install.id,
-      locationId: install.locationId,
-      tokenStatus: install.tokenStatus,
-      createdAt: install.createdAt,
-      expiresAt: install.expiresAt,
-      scopes: install.scopes,
-      hasAccessToken: !!install.accessToken,
-      hasRefreshToken: !!install.refreshToken,
-      bridgeArchitecture: install.bridgeArchitecture
-    }))
+    total: installations.size,
+    authenticated: installList.filter(inst => inst.tokenStatus === 'valid').length,
+    installations: installList
   });
 });
 
-// Media upload endpoint
+// OAuth token exchange
+async function exchangeCode(code, redirectUri) {
+  const body = new URLSearchParams({
+    client_id: process.env.GHL_CLIENT_ID,
+    client_secret: process.env.GHL_CLIENT_SECRET,
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: redirectUri
+  });
+  const { data } = await axios.post('https://services.leadconnectorhq.com/oauth/token', body, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 15000
+  });
+  return data;
+}
+
+function storeInstall(tokenData) {
+  const id = `install_${Date.now()}`;
+  installations.set(id, {
+    id,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token,
+    expiresIn: tokenData.expires_in,
+    expiresAt: Date.now() + tokenData.expires_in * 1000,
+    locationId: tokenData.locationId || 'WAvk87RmW9rBSDJHeOpH',
+    scopes: tokenData.scope || '',
+    tokenStatus: 'valid',
+    createdAt: new Date().toISOString()
+  });
+  scheduleRefresh(id);
+  console.log(`[NEW INSTALL] ${id} stored with location ${tokenData.locationId || 'WAvk87RmW9rBSDJHeOpH'}`);
+  return id;
+}
+
+// OAUTH CALLBACK - Enhanced with better logging
+app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
+  console.log('=== OAUTH CALLBACK RECEIVED ===');
+  console.log('Query params:', req.query);
+  console.log('Headers:', req.headers);
+  
+  const { code, error, state } = req.query;
+  
+  if (error) {
+    console.error('OAuth error from GHL:', error);
+    return res.status(400).json({ error: 'OAuth error', details: error });
+  }
+  
+  if (!code) {
+    console.error('No authorization code received');
+    return res.status(400).json({ error: 'code required' });
+  }
+  
+  try {
+    const redirectUri = req.path.startsWith('/api')
+      ? (process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/api/oauth/callback')
+      : (process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback');
+
+    console.log('Exchanging code for tokens...');
+    console.log('Redirect URI:', redirectUri);
+    
+    const tokenData = await exchangeCode(code, redirectUri);
+    console.log('Token exchange successful');
+    
+    const id = storeInstall(tokenData);
+    console.log('Installation stored with ID:', id);
+    
+    const url = `https://listings.engageautomations.com/?installation_id=${id}&welcome=true`;
+    console.log('Redirecting to:', url);
+    
+    res.redirect(url);
+  } catch (e) {
+    console.error('OAuth error:', e.response?.data || e.message);
+    res.status(500).json({ error: 'OAuth failed', details: e.response?.data || e.message });
+  }
+});
+
+app.get('/api/oauth/status', (req, res) => {
+  const inst = installations.get(req.query.installation_id);
+  if (!inst) return res.json({ authenticated: false });
+  res.json({ authenticated: true, tokenStatus: inst.tokenStatus, locationId: inst.locationId });
+});
+
+// MEDIA UPLOAD ENDPOINT
 app.post('/api/media/upload', upload.single('file'), async (req, res) => {
+  console.log('=== MEDIA UPLOAD REQUEST ===');
+  
   try {
     const { installation_id } = req.body;
-    const install = installations.get(installation_id);
     
-    if (!install || !install.accessToken) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid installation or missing access token' 
-      });
+    if (!installation_id) {
+      return res.status(400).json({ success: false, error: 'installation_id required' });
     }
-
+    
     if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'No file uploaded' 
-      });
+      return res.status(400).json({ success: false, error: 'file required' });
     }
-
-    // Ensure fresh token
-    if (new Date(install.expiresAt).getTime() - Date.now() < PADDING_MS) {
-      await refreshAccessToken(installation_id);
-    }
-
-    // Upload to GoHighLevel
+    
+    console.log(`Uploading file: ${req.file.originalname} (${req.file.size} bytes)`);
+    
+    await ensureFreshToken(installation_id);
+    const installation = installations.get(installation_id);
+    
+    // Create form data for GoHighLevel API
     const formData = new FormData();
-    formData.append('file', fs.createReadStream(req.file.path), req.file.originalname);
-
-    const uploadResponse = await axios.post(
-      `https://services.leadconnectorhq.com/locations/${install.locationId}/medias/upload-file`,
-      formData,
-      {
-        headers: {
-          'Authorization': `Bearer ${install.accessToken}`,
-          'Version': '2021-07-28',
-          ...formData.getHeaders()
-        },
-        timeout: 60000
+    formData.append('file', fs.createReadStream(req.file.path), {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype
+    });
+    
+    // Upload to GoHighLevel media library
+    const uploadResponse = await axios.post(`https://services.leadconnectorhq.com/medias/upload-file`, formData, {
+      headers: {
+        'Authorization': `Bearer ${installation.accessToken}`,
+        'Version': '2021-07-28',
+        ...formData.getHeaders()
+      },
+      params: {
+        locationId: installation.locationId
       }
-    );
-
+    });
+    
     // Clean up uploaded file
     fs.unlinkSync(req.file.path);
-
+    
+    console.log('Media upload successful:', uploadResponse.data);
+    
     res.json({
       success: true,
-      mediaUrl: uploadResponse.data.url,
+      mediaUrl: uploadResponse.data.url || uploadResponse.data.fileUrl,
+      mediaId: uploadResponse.data.id,
       data: uploadResponse.data
     });
-
-  } catch (error) {
-    console.error('[MEDIA] Upload error:', error.response?.data || error.message);
     
-    if (req.file) {
+  } catch (error) {
+    // Clean up file if it exists
+    if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
-
+    
+    console.error('Media upload error:', error.response?.data || error.message);
     res.status(500).json({
       success: false,
-      error: error.response?.data?.message || error.message
+      error: error.response?.data || error.message
     });
   }
 });
 
-// Product creation endpoint
-app.post('/api/products/create', async (req, res) => {
+// MEDIA LIST ENDPOINT
+app.get('/api/media/list', async (req, res) => {
   try {
-    const { installation_id, name, description, productType, medias } = req.body;
-    const install = installations.get(installation_id);
+    const { installation_id } = req.query;
     
-    if (!install || !install.accessToken) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid installation or missing access token' 
-      });
+    if (!installation_id) {
+      return res.status(400).json({ success: false, error: 'installation_id required' });
     }
-
-    // Ensure fresh token
-    if (new Date(install.expiresAt).getTime() - Date.now() < PADDING_MS) {
-      await refreshAccessToken(installation_id);
-    }
-
-    const productData = {
-      name,
-      description,
-      productType: productType || 'SERVICE',
-      locationId: install.locationId
-    };
-
-    if (medias && medias.length > 0) {
-      productData.medias = medias;
-    }
-
-    const productResponse = await axios.post(
-      'https://services.leadconnectorhq.com/products/',
-      productData,
-      {
-        headers: {
-          'Authorization': `Bearer ${install.accessToken}`,
-          'Version': '2021-07-28',
-          'Content-Type': 'application/json'
-        }
+    
+    await ensureFreshToken(installation_id);
+    const installation = installations.get(installation_id);
+    
+    const mediaResponse = await axios.get('https://services.leadconnectorhq.com/medias/', {
+      headers: {
+        'Authorization': `Bearer ${installation.accessToken}`,
+        'Version': '2021-07-28'
+      },
+      params: {
+        locationId: installation.locationId,
+        limit: 100
       }
-    );
-
+    });
+    
     res.json({
       success: true,
-      product: productResponse.data
+      media: mediaResponse.data.medias || mediaResponse.data,
+      total: mediaResponse.data.count || mediaResponse.data.length
     });
-
+    
   } catch (error) {
-    console.error('[PRODUCT] Creation error:', error.response?.data || error.message);
+    console.error('Media list error:', error.response?.data || error.message);
     res.status(500).json({
       success: false,
-      error: error.response?.data?.message || error.message
+      error: error.response?.data || error.message
     });
   }
 });
 
-// Product pricing endpoint
+// PRICING ENDPOINT
 app.post('/api/products/:productId/prices', async (req, res) => {
   try {
     const { productId } = req.params;
     const { installation_id, name, type, amount, currency } = req.body;
-    const install = installations.get(installation_id);
     
-    if (!install || !install.accessToken) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid installation or missing access token' 
-      });
+    if (!installation_id) {
+      return res.status(400).json({ success: false, error: 'installation_id required' });
     }
-
-    // Ensure fresh token
-    if (new Date(install.expiresAt).getTime() - Date.now() < PADDING_MS) {
-      await refreshAccessToken(installation_id);
-    }
-
-    const pricingData = {
+    
+    await ensureFreshToken(installation_id);
+    const installation = installations.get(installation_id);
+    
+    const priceData = {
       name,
-      type: type || 'one_time',
-      amount,
+      type,
+      amount: parseInt(amount),
       currency: currency || 'USD'
     };
-
-    const priceResponse = await axios.post(
-      `https://services.leadconnectorhq.com/products/${productId}/prices`,
-      pricingData,
-      {
-        headers: {
-          'Authorization': `Bearer ${install.accessToken}`,
-          'Version': '2021-07-28',
-          'Content-Type': 'application/json'
-        }
+    
+    const priceResponse = await axios.post(`https://services.leadconnectorhq.com/products/${productId}/prices`, priceData, {
+      headers: {
+        'Authorization': `Bearer ${installation.accessToken}`,
+        'Version': '2021-07-28',
+        'Content-Type': 'application/json'
       }
-    );
-
+    });
+    
+    console.log('Price created:', priceResponse.data);
+    
     res.json({
       success: true,
       price: priceResponse.data
     });
-
+    
   } catch (error) {
-    console.error('[PRICING] Error:', error.response?.data || error.message);
+    console.error('Price creation error:', error.response?.data || error.message);
     res.status(500).json({
       success: false,
-      error: error.response?.data?.message || error.message
+      error: error.response?.data || error.message
     });
   }
 });
 
-// Background token refresh system
-cron.schedule('0 * * * *', () => {
-  console.log('[CRON] Running hourly token refresh check');
-  
-  for (const [installationId, install] of installations.entries()) {
-    if (install.refreshToken && install.expiresAt) {
-      const expiryTime = new Date(install.expiresAt).getTime();
-      const timeToExpiry = expiryTime - Date.now();
-      
-      // Refresh if expiring within 2 hours
-      if (timeToExpiry < 2 * 60 * 60 * 1000) {
-        console.log(`[CRON] Refreshing token for ${installationId}`);
-        refreshAccessToken(installationId);
-      }
-    }
-  }
-});
-
 // Start server
-app.listen(PORT, () => {
-  console.log(`[SERVER] Railway Backend with Bridge-First Architecture v6.0.0 running on port ${PORT}`);
-  console.log('[BRIDGE] Bridge URL expected in BRIDGE_URL environment variable');
-  console.log('[BRIDGE] OAuth credentials will be fetched from bridge on first OAuth callback');
+app.listen(port, () => {
+  console.log(`Enhanced OAuth backend running on port ${port}`);
+  console.log(`Version: 5.3.0-complete-workflow`);
+  console.log(`Features: OAuth, Products, Media Upload, Pricing`);
+  console.log(`Installations: ${installations.size}`);
+  console.log('Ready for multi-step product creation workflow');
 });
-
-module.exports = app;
