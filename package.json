@@ -1,21 +1,20 @@
 {
-  "name": "oauth-backend",
-  "version": "5.4.2-oauth-fixed",
-  "description": "GoHighLevel OAuth Backend with Fixed Token Handling",
+  "name": "oauth-backend-emergency",
+  "version": "7.0.3-encoding-fixed",
+  "description": "OAuth backend with explicit form encoding fix",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "axios": "^1.4.0",
-    "cors": "^2.8.5",
-    "multer": "^1.4.5-lts.1",
-    "form-data": "^4.0.0",
-    "node-cron": "^3.0.2"
+    "express": "latest",
+    "cors": "latest",
+    "axios": "latest",
+    "multer": "latest",
+    "form-data": "latest"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18"
   }
 }
