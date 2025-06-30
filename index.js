@@ -142,33 +142,18 @@ app.get('/installations', (req, res) => {
 
 // OAuth token exchange
 async function exchangeCode(code, redirectUri) {
-  try {
-    console.log('Token exchange starting with code:', code.substring(0, 10) + '...');
-    
-    // Create form-encoded body using URLSearchParams
-    const params = new URLSearchParams();
-    params.append('client_id', process.env.GHL_CLIENT_ID);
-    params.append('client_secret', process.env.GHL_CLIENT_SECRET);
-    params.append('grant_type', 'authorization_code');
-    params.append('code', code);
-    params.append('redirect_uri', redirectUri);
-    
-    console.log('Sending form-encoded request to GoHighLevel...');
-    
-    const { data } = await axios.post('https://services.leadconnectorhq.com/oauth/token', params, {
-      headers: { 
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
-      },
-      timeout: 15000
-    });
-    
-    console.log('Token exchange successful');
-    return data;
-  } catch (error) {
-    console.error('Token exchange failed:', error.response?.data || error.message);
-    throw error;
-  }
+  const body = new URLSearchParams({
+    client_id: process.env.GHL_CLIENT_ID,
+    client_secret: process.env.GHL_CLIENT_SECRET,
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: redirectUri
+  });
+  const { data } = await axios.post('https://services.leadconnectorhq.com/oauth/token', body, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 15000
+  });
+  return data;
 }
 
 function storeInstall(tokenData) {
@@ -380,6 +365,104 @@ app.post('/api/products/:productId/prices', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.response?.data || error.message
+    });
+  }
+});
+
+// PRODUCT CREATION ENDPOINT
+app.post('/api/products/create', async (req, res) => {
+  console.log('=== PRODUCT CREATION REQUEST ===');
+  
+  try {
+    const { name, description, productType, sku, currency, installation_id } = req.body;
+    
+    if (!installation_id) {
+      return res.status(400).json({ success: false, error: 'installation_id required' });
+    }
+    
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'product name required' });
+    }
+    
+    console.log(`Creating product: ${name}`);
+    
+    await ensureFreshToken(installation_id);
+    const installation = installations.get(installation_id);
+    
+    const productData = {
+      name,
+      description: description || '',
+      productType: productType || 'PHYSICAL',
+      ...(sku && { sku }),
+      ...(currency && { currency })
+    };
+    
+    // Create product in GoHighLevel
+    const productResponse = await axios.post('https://services.leadconnectorhq.com/products/', productData, {
+      headers: {
+        'Authorization': `Bearer ${installation.accessToken}`,
+        'Version': '2021-07-28',
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log('Product creation successful:', productResponse.data);
+    
+    res.json({
+      success: true,
+      product: productResponse.data.product || productResponse.data,
+      message: 'Product created successfully in GoHighLevel'
+    });
+    
+  } catch (error) {
+    console.error('Product creation error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message,
+      message: 'Failed to create product in GoHighLevel'
+    });
+  }
+});
+
+// PRODUCT LISTING ENDPOINT
+app.get('/api/products/list', async (req, res) => {
+  console.log('=== PRODUCT LISTING REQUEST ===');
+  
+  try {
+    const { installation_id } = req.query;
+    
+    if (!installation_id) {
+      return res.status(400).json({ success: false, error: 'installation_id required' });
+    }
+    
+    await ensureFreshToken(installation_id);
+    const installation = installations.get(installation_id);
+    
+    const productsResponse = await axios.get('https://services.leadconnectorhq.com/products/', {
+      headers: {
+        'Authorization': `Bearer ${installation.accessToken}`,
+        'Version': '2021-07-28'
+      },
+      params: {
+        locationId: installation.locationId,
+        limit: 100
+      }
+    });
+    
+    console.log('Products retrieved:', productsResponse.data.products?.length || 0);
+    
+    res.json({
+      success: true,
+      products: productsResponse.data.products || [],
+      count: productsResponse.data.products?.length || 0
+    });
+    
+  } catch (error) {
+    console.error('Product listing error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message,
+      message: 'Failed to retrieve products from GoHighLevel'
     });
   }
 });
