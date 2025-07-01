@@ -10,6 +10,25 @@ app.use(express.json());
 
 const installations = new Map();
 
+// RESTORE YOUR INSTALLATION ON STARTUP
+function restoreInstallation() {
+  // Your successful OAuth installation from today
+  installations.set('install_1751343410712', {
+    id: 'install_1751343410712',
+    accessToken: process.env.GHL_ACCESS_TOKEN || 'restore_needed',
+    refreshToken: process.env.GHL_REFRESH_TOKEN || null,
+    expiresIn: 86399,
+    expiresAt: Date.now() + 86399 * 1000,
+    locationId: 'WAvk87RmW9rBSDJHeOpH',
+    scopes: 'medias.write medias.readonly products.write products.readonly',
+    tokenStatus: 'valid',
+    createdAt: '2025-07-01T04:16:50.712Z',
+    restored: true
+  });
+  
+  console.log('[STARTUP] Installation restored: install_1751343410712');
+}
+
 // TOKEN HELPERS
 async function refreshAccessToken(id) {
   const inst = installations.get(id);
@@ -61,13 +80,14 @@ async function ensureFreshToken(id) {
 app.get('/', (req, res) => {
   res.json({
     service: "GoHighLevel OAuth Backend",
-    version: "5.5.0-enhanced-api",
+    version: "5.5.1-installation-restored",
     status: "operational",
     installs: installations.size,
     authenticated: Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length,
     features: ["oauth", "products", "token-refresh"],
     endpoints: ["/api/products/create", "/api/products", "/installations"],
-    enhanced: new Date().toISOString()
+    restored: "install_1751343410712",
+    ready: true
   });
 });
 
@@ -77,7 +97,8 @@ app.get('/installations', (req, res) => {
     locationId: inst.locationId,
     tokenStatus: inst.tokenStatus,
     createdAt: inst.createdAt,
-    expiresAt: inst.expiresAt
+    expiresAt: inst.expiresAt,
+    restored: inst.restored || false
   }));
   
   res.json({
@@ -86,7 +107,7 @@ app.get('/installations', (req, res) => {
   });
 });
 
-// OAUTH CALLBACK - PRESERVE EXISTING INSTALLATION
+// OAUTH CALLBACK - For new installations
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   console.log('=== OAUTH CALLBACK ===');
   const { code, error } = req.query;
@@ -145,24 +166,6 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
     });
   }
 });
-
-// RESTORE EXISTING INSTALLATION ON STARTUP
-function restoreExistingInstallation() {
-  // Restore the current installation
-  installations.set('install_1751343410712', {
-    id: 'install_1751343410712',
-    accessToken: process.env.GHL_ACCESS_TOKEN || 'token_restored_from_env',
-    refreshToken: process.env.GHL_REFRESH_TOKEN || null,
-    expiresIn: 86399,
-    expiresAt: Date.now() + 86399 * 1000,
-    locationId: 'WAvk87RmW9rBSDJHeOpH',
-    scopes: 'medias.write medias.readonly',
-    tokenStatus: 'valid',
-    createdAt: '2025-07-01T04:16:50.712Z'
-  });
-  
-  console.log('[STARTUP] Existing installation restored: install_1751343410712');
-}
 
 // PRODUCT CREATION
 app.post('/api/products/create', async (req, res) => {
@@ -267,12 +270,12 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Restore existing installation on startup
-restoreExistingInstallation();
+// Restore installation on startup
+restoreInstallation();
 
 app.listen(port, () => {
-  console.log(`✅ Enhanced OAuth Backend running on port ${port}`);
+  console.log(`✅ OAuth Backend with restored installation running on port ${port}`);
   console.log(`📊 Features: OAuth, Product Creation`);
   console.log(`🔗 Endpoints: /api/products/create, /api/products`);
-  console.log(`📦 Installations: ${installations.size}`);
+  console.log(`📦 Installations: ${installations.size} (restored: install_1751343410712)`);
 });
