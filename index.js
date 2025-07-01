@@ -13,19 +13,32 @@ const installations = new Map();
 // OAUTH CALLBACK - Process and redirect to frontend
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   console.log('=== OAUTH CALLBACK ===');
+  console.log('Query params:', req.query);
+  console.log('Headers:', req.headers);
+  
   const { code, error, state } = req.query;
   
   if (error) {
-    console.error('OAuth error:', error);
-    return res.redirect(`https://listings.engageautomations.com/oauth-error?error=${encodeURIComponent(error)}`);
+    console.error('OAuth error received:', error);
+    const errorUrl = `https://listings.engageautomations.com/oauth-error?error=${encodeURIComponent(error)}`;
+    console.log('Redirecting to error page:', errorUrl);
+    return res.redirect(302, errorUrl);
   }
   
   if (!code) {
-    return res.redirect('https://listings.engageautomations.com/oauth-error?error=missing_code');
+    console.error('No authorization code provided');
+    const errorUrl = 'https://listings.engageautomations.com/oauth-error?error=missing_code';
+    console.log('Redirecting to error page:', errorUrl);
+    return res.redirect(302, errorUrl);
   }
 
   try {
-    console.log('Processing OAuth code and redirecting to frontend...');
+    console.log('Processing OAuth code:', code.substring(0, 8) + '...');
+    
+    // Check for required environment variables
+    if (!process.env.GHL_CLIENT_ID || !process.env.GHL_CLIENT_SECRET) {
+      throw new Error('Missing GHL_CLIENT_ID or GHL_CLIENT_SECRET environment variables');
+    }
     
     // Exchange authorization code for tokens
     const body = new URLSearchParams({
@@ -36,14 +49,20 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
       redirect_uri: process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback'
     });
 
-    console.log('[OAUTH] Exchanging authorization code...');
+    console.log('[OAUTH] Exchanging authorization code for tokens...');
+    console.log('[OAUTH] Client ID:', process.env.GHL_CLIENT_ID);
+    console.log('[OAUTH] Redirect URI:', process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback');
+    
     const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', body, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       timeout: 15000
     });
 
+    console.log('[OAUTH] Token exchange successful');
+    console.log('[OAUTH] Response keys:', Object.keys(tokenResponse.data));
+
     const installationId = `install_${Date.now()}`;
-    installations.set(installationId, {
+    const installationData = {
       id: installationId,
       accessToken: tokenResponse.data.access_token,
       refreshToken: tokenResponse.data.refresh_token,
@@ -53,9 +72,13 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
       scopes: tokenResponse.data.scope || '',
       tokenStatus: 'valid',
       createdAt: new Date().toISOString()
-    });
+    };
+    
+    installations.set(installationId, installationData);
 
     console.log(`[INSTALL] ✅ ${installationId} created successfully`);
+    console.log(`[INSTALL] Location ID: ${installationData.locationId}`);
+    console.log(`[INSTALL] Token expires in: ${installationData.expiresIn} seconds`);
     
     // Redirect to frontend with installation details
     const frontendUrl = `https://listings.engageautomations.com/?installation_id=${installationId}&welcome=true`;
@@ -64,7 +87,8 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
     res.redirect(302, frontendUrl);
 
   } catch (error) {
-    console.error('OAuth processing error:', error.response?.data || error.message);
+    console.error('OAuth processing error:', error);
+    console.error('Error details:', error.response?.data || error.message);
     
     // Redirect to frontend error page with details
     const errorParams = new URLSearchParams({
@@ -73,7 +97,9 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
       timestamp: new Date().toISOString()
     });
     
-    res.redirect(`https://listings.engageautomations.com/oauth-error?${errorParams}`);
+    const errorUrl = `https://listings.engageautomations.com/oauth-error?${errorParams}`;
+    console.log('Redirecting to error page:', errorUrl);
+    res.redirect(302, errorUrl);
   }
 });
 
@@ -161,7 +187,7 @@ async function makeGHLAPICall(installationId, requestConfig, maxRetries = 3) {
   }
 }
 
-// BASIC ROUTES
+// HEALTH CHECK
 app.get('/', (req, res) => {
   const html = `
 <!DOCTYPE html>
@@ -187,6 +213,7 @@ app.get('/', (req, res) => {
         <p><strong>Installations:</strong> ${installations.size}</p>
         <p><strong>Authenticated:</strong> ${Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length}</p>
         <p><strong>Frontend:</strong> <a href="https://listings.engageautomations.com">listings.engageautomations.com</a></p>
+        <p><strong>Environment:</strong> ${process.env.GHL_CLIENT_ID ? 'Configured' : 'Missing Config'}</p>
         <p><strong>Last Updated:</strong> ${new Date().toISOString()}</p>
     </div>
     
@@ -197,9 +224,9 @@ app.get('/', (req, res) => {
     <div class="feature">Token Management</div>
     
     <h3>📡 API Endpoints</h3>
+    <div class="endpoint"><strong>GET/POST</strong> /oauth/callback - OAuth processing with frontend redirect</div>
     <div class="endpoint"><strong>POST</strong> /api/products/create - Create products with auto-retry</div>
     <div class="endpoint"><strong>GET</strong> /installations - View installations</div>
-    <div class="endpoint"><strong>GET</strong> /api/token-health/:id - Token status</div>
 </body>
 </html>
 `;
@@ -207,6 +234,7 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
+// INSTALLATIONS ENDPOINT
 app.get('/installations', (req, res) => {
   const installationsArray = Array.from(installations.values()).map(inst => ({
     id: inst.id,
@@ -220,35 +248,13 @@ app.get('/installations', (req, res) => {
   res.json({
     installations: installationsArray,
     count: installationsArray.length,
-    frontend: 'https://listings.engageautomations.com'
-  });
-});
-
-// TOKEN HEALTH CHECK
-app.get('/api/token-health/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const installation = installations.get(id);
-    
-    if (!installation) {
-      return res.status(404).json({ error: 'Installation not found' });
+    frontend: 'https://listings.engageautomations.com',
+    environment: {
+      hasClientId: !!process.env.GHL_CLIENT_ID,
+      hasClientSecret: !!process.env.GHL_CLIENT_SECRET,
+      redirectUri: process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback'
     }
-    
-    const timeUntilExpiry = installation.expiresAt - Date.now();
-    const isExpiringSoon = timeUntilExpiry < 10 * 60 * 1000; // 10 minutes
-    
-    res.json({
-      installationId: id,
-      tokenStatus: installation.tokenStatus,
-      expiresAt: installation.expiresAt,
-      timeUntilExpiry: Math.max(0, Math.round(timeUntilExpiry / 1000)),
-      isExpiringSoon,
-      locationId: installation.locationId
-    });
-    
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  });
 });
 
 // PRODUCT CREATION WITH AUTO-RETRY
@@ -301,4 +307,8 @@ app.listen(port, () => {
   console.log(`✅ OAuth Backend v5.8.0-frontend-redirect running on port ${port}`);
   console.log(`🔗 OAuth processing with frontend redirect to listings.engageautomations.com`);
   console.log(`🔄 Auto-retry system with 3 attempts and smart token refresh`);
+  console.log(`⚙️  Environment check:`);
+  console.log(`   - GHL_CLIENT_ID: ${process.env.GHL_CLIENT_ID ? 'Set' : 'MISSING'}`);
+  console.log(`   - GHL_CLIENT_SECRET: ${process.env.GHL_CLIENT_SECRET ? 'Set' : 'MISSING'}`);
+  console.log(`   - GHL_REDIRECT_URI: ${process.env.GHL_REDIRECT_URI || 'Default'}`);
 });
