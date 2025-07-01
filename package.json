@@ -1,20 +1,19 @@
 {
-  "name": "oauth-backend-emergency",
-  "version": "7.0.0-production-ready",
-  "description": "Enhanced GoHighLevel OAuth backend with automatic retry system and proactive token refresh",
+  "name": "oauth-backend",
+  "version": "5.5.0",
+  "description": "GoHighLevel OAuth Backend with Enhanced API",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js"
+    "start": "node index.js"
   },
   "dependencies": {
-    "express": "latest",
-    "cors": "latest",
-    "axios": "latest",
-    "multer": "latest",
-    "form-data": "latest"
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0",
+    "multer": "^1.4.5-lts.1",
+    "form-data": "^4.0.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=18.0.0"
   }
 }
