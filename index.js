@@ -1,46 +1,42 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const multer = require('multer');
+const FormData = require('form-data');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+
+// Configure multer for memory storage
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 } // 25MB limit
+});
 
 const installations = new Map();
 
 // OAUTH CALLBACK - Process and redirect to frontend
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   console.log('=== OAUTH CALLBACK ===');
-  console.log('Query params:', req.query);
-  console.log('Headers:', req.headers);
-  
   const { code, error, state } = req.query;
   
   if (error) {
     console.error('OAuth error received:', error);
     const errorUrl = `https://listings.engageautomations.com/oauth-error?error=${encodeURIComponent(error)}`;
-    console.log('Redirecting to error page:', errorUrl);
     return res.redirect(302, errorUrl);
   }
   
   if (!code) {
     console.error('No authorization code provided');
-    const errorUrl = 'https://listings.engageautomations.com/oauth-error?error=missing_code';
-    console.log('Redirecting to error page:', errorUrl);
-    return res.redirect(302, errorUrl);
+    return res.redirect(302, 'https://listings.engageautomations.com/oauth-error?error=missing_code');
   }
 
   try {
     console.log('Processing OAuth code:', code.substring(0, 8) + '...');
     
-    // Check for required environment variables
-    if (!process.env.GHL_CLIENT_ID || !process.env.GHL_CLIENT_SECRET) {
-      throw new Error('Missing GHL_CLIENT_ID or GHL_CLIENT_SECRET environment variables');
-    }
-    
-    // Exchange authorization code for tokens
     const body = new URLSearchParams({
       client_id: process.env.GHL_CLIENT_ID,
       client_secret: process.env.GHL_CLIENT_SECRET,
@@ -49,17 +45,10 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
       redirect_uri: process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback'
     });
 
-    console.log('[OAUTH] Exchanging authorization code for tokens...');
-    console.log('[OAUTH] Client ID:', process.env.GHL_CLIENT_ID);
-    console.log('[OAUTH] Redirect URI:', process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback');
-    
     const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', body, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       timeout: 15000
     });
-
-    console.log('[OAUTH] Token exchange successful');
-    console.log('[OAUTH] Response keys:', Object.keys(tokenResponse.data));
 
     const installationId = `install_${Date.now()}`;
     const installationData = {
@@ -75,31 +64,19 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
     };
     
     installations.set(installationId, installationData);
-
     console.log(`[INSTALL] ✅ ${installationId} created successfully`);
-    console.log(`[INSTALL] Location ID: ${installationData.locationId}`);
-    console.log(`[INSTALL] Token expires in: ${installationData.expiresIn} seconds`);
     
-    // Redirect to frontend with installation details
     const frontendUrl = `https://listings.engageautomations.com/?installation_id=${installationId}&welcome=true`;
-    console.log(`[REDIRECT] Sending user to frontend: ${frontendUrl}`);
-    
     res.redirect(302, frontendUrl);
 
   } catch (error) {
-    console.error('OAuth processing error:', error);
-    console.error('Error details:', error.response?.data || error.message);
-    
-    // Redirect to frontend error page with details
+    console.error('OAuth processing error:', error.response?.data || error.message);
     const errorParams = new URLSearchParams({
       error: 'oauth_processing_failed',
       details: error.response?.data?.message || error.message,
       timestamp: new Date().toISOString()
     });
-    
-    const errorUrl = `https://listings.engageautomations.com/oauth-error?${errorParams}`;
-    console.log('Redirecting to error page:', errorUrl);
-    res.redirect(302, errorUrl);
+    res.redirect(302, `https://listings.engageautomations.com/oauth-error?${errorParams}`);
   }
 });
 
@@ -161,10 +138,9 @@ async function makeGHLAPICall(installationId, requestConfig, maxRetries = 3) {
         headers: {
           'Authorization': `Bearer ${installation.accessToken}`,
           'Version': '2021-07-28',
-          'Content-Type': 'application/json',
           ...requestConfig.headers
         },
-        timeout: 15000
+        timeout: 30000
       };
       
       const response = await axios(config);
@@ -187,6 +163,99 @@ async function makeGHLAPICall(installationId, requestConfig, maxRetries = 3) {
   }
 }
 
+// IMAGE UPLOAD API ENDPOINT
+app.post('/api/images/upload', upload.single('file'), async (req, res) => {
+  try {
+    console.log('=== IMAGE UPLOAD REQUEST ===');
+    
+    const { installation_id } = req.body;
+    
+    if (!installation_id) {
+      return res.status(400).json({ success: false, error: 'installation_id required' });
+    }
+    
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No file uploaded' });
+    }
+    
+    console.log('File details:', {
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    });
+    
+    const installation = await ensureFreshToken(installation_id);
+    
+    // Create FormData for multipart upload
+    const formData = new FormData();
+    formData.append('file', req.file.buffer, {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype
+    });
+    formData.append('locationId', installation.locationId);
+    
+    console.log(`[UPLOAD] Uploading ${req.file.originalname} (${req.file.size} bytes) to GoHighLevel...`);
+    
+    const response = await makeGHLAPICall(installation_id, {
+      method: 'POST',
+      url: 'https://services.leadconnectorhq.com/medias/upload-file',
+      data: formData,
+      headers: {
+        ...formData.getHeaders(),
+        'Content-Type': `multipart/form-data; boundary=${formData.getBoundary()}`
+      }
+    });
+    
+    console.log('[UPLOAD] ✅ Upload successful:', response.data);
+    
+    res.json({
+      success: true,
+      media: response.data,
+      message: 'Image uploaded successfully to GoHighLevel media library'
+    });
+    
+  } catch (error) {
+    console.error('[UPLOAD] Error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message,
+      message: 'Failed to upload image to GoHighLevel'
+    });
+  }
+});
+
+// GET MEDIA FILES
+app.get('/api/images/list', async (req, res) => {
+  try {
+    const { installation_id, limit = 20, offset = 0 } = req.query;
+    
+    if (!installation_id) {
+      return res.status(400).json({ success: false, error: 'installation_id required' });
+    }
+    
+    const installation = await ensureFreshToken(installation_id);
+    
+    const response = await makeGHLAPICall(installation_id, {
+      method: 'GET',
+      url: `https://services.leadconnectorhq.com/medias/?locationId=${installation.locationId}&limit=${limit}&offset=${offset}`
+    });
+    
+    res.json({
+      success: true,
+      media: response.data,
+      message: 'Media files retrieved successfully'
+    });
+    
+  } catch (error) {
+    console.error('[MEDIA LIST] Error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      error: error.response?.data || error.message,
+      message: 'Failed to retrieve media files'
+    });
+  }
+});
+
 // HEALTH CHECK
 app.get('/', (req, res) => {
   const html = `
@@ -205,7 +274,7 @@ app.get('/', (req, res) => {
 <body>
     <div class="header">
         <h1>🔗 GoHighLevel OAuth Backend</h1>
-        <p>Version 5.8.0-frontend-redirect | Status: Operational</p>
+        <p>Version 5.9.0-image-upload | Status: Operational</p>
     </div>
     
     <div class="status">
@@ -213,18 +282,18 @@ app.get('/', (req, res) => {
         <p><strong>Installations:</strong> ${installations.size}</p>
         <p><strong>Authenticated:</strong> ${Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length}</p>
         <p><strong>Frontend:</strong> <a href="https://listings.engageautomations.com">listings.engageautomations.com</a></p>
-        <p><strong>Environment:</strong> ${process.env.GHL_CLIENT_ID ? 'Configured' : 'Missing Config'}</p>
         <p><strong>Last Updated:</strong> ${new Date().toISOString()}</p>
     </div>
     
     <h3>🚀 Features</h3>
     <div class="feature">OAuth Processing</div>
     <div class="feature">Frontend Redirect</div>
+    <div class="feature">Image Upload</div>
     <div class="feature">Auto-Retry System</div>
-    <div class="feature">Token Management</div>
     
     <h3>📡 API Endpoints</h3>
-    <div class="endpoint"><strong>GET/POST</strong> /oauth/callback - OAuth processing with frontend redirect</div>
+    <div class="endpoint"><strong>POST</strong> /api/images/upload - Upload images to media library (multipart/form-data)</div>
+    <div class="endpoint"><strong>GET</strong> /api/images/list - List media files with pagination</div>
     <div class="endpoint"><strong>POST</strong> /api/products/create - Create products with auto-retry</div>
     <div class="endpoint"><strong>GET</strong> /installations - View installations</div>
 </body>
@@ -248,12 +317,7 @@ app.get('/installations', (req, res) => {
   res.json({
     installations: installationsArray,
     count: installationsArray.length,
-    frontend: 'https://listings.engageautomations.com',
-    environment: {
-      hasClientId: !!process.env.GHL_CLIENT_ID,
-      hasClientSecret: !!process.env.GHL_CLIENT_SECRET,
-      redirectUri: process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback'
-    }
+    frontend: 'https://listings.engageautomations.com'
   });
 });
 
@@ -284,7 +348,8 @@ app.post('/api/products/create', async (req, res) => {
     const response = await makeGHLAPICall(installation_id, {
       method: 'POST',
       url: 'https://services.leadconnectorhq.com/products/',
-      data: productData
+      data: productData,
+      headers: { 'Content-Type': 'application/json' }
     });
     
     res.json({
@@ -304,11 +369,8 @@ app.post('/api/products/create', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`✅ OAuth Backend v5.8.0-frontend-redirect running on port ${port}`);
-  console.log(`🔗 OAuth processing with frontend redirect to listings.engageautomations.com`);
-  console.log(`🔄 Auto-retry system with 3 attempts and smart token refresh`);
-  console.log(`⚙️  Environment check:`);
-  console.log(`   - GHL_CLIENT_ID: ${process.env.GHL_CLIENT_ID ? 'Set' : 'MISSING'}`);
-  console.log(`   - GHL_CLIENT_SECRET: ${process.env.GHL_CLIENT_SECRET ? 'Set' : 'MISSING'}`);
-  console.log(`   - GHL_REDIRECT_URI: ${process.env.GHL_REDIRECT_URI || 'Default'}`);
+  console.log(`✅ OAuth Backend v5.9.0-image-upload running on port ${port}`);
+  console.log(`🔗 OAuth processing with frontend redirect`);
+  console.log(`📷 Image upload API with multipart form support`);
+  console.log(`🔄 Auto-retry system with 3 attempts`);
 });
