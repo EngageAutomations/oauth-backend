@@ -10,31 +10,17 @@ app.use(express.json());
 
 const installations = new Map();
 
-// RESTORE YOUR INSTALLATION ON STARTUP
-function restoreInstallation() {
-  // Your successful OAuth installation from today
-  installations.set('install_1751343410712', {
-    id: 'install_1751343410712',
-    accessToken: process.env.GHL_ACCESS_TOKEN || 'restore_needed',
-    refreshToken: process.env.GHL_REFRESH_TOKEN || null,
-    expiresIn: 86399,
-    expiresAt: Date.now() + 86399 * 1000,
-    locationId: 'WAvk87RmW9rBSDJHeOpH',
-    scopes: 'medias.write medias.readonly products.write products.readonly',
-    tokenStatus: 'valid',
-    createdAt: '2025-07-01T04:16:50.712Z',
-    restored: true
-  });
-  
-  console.log('[STARTUP] Installation restored: install_1751343410712');
-}
-
-// TOKEN HELPERS
+// ENHANCED TOKEN MANAGEMENT
 async function refreshAccessToken(id) {
   const inst = installations.get(id);
-  if (!inst || !inst.refreshToken) return false;
+  if (!inst || !inst.refreshToken) {
+    console.log(`[REFRESH] No refresh token for ${id}`);
+    return false;
+  }
 
   try {
+    console.log(`[REFRESH] Refreshing token for ${id}...`);
+    
     const body = new URLSearchParams({
       client_id: process.env.GHL_CLIENT_ID,
       client_secret: process.env.GHL_CLIENT_SECRET,
@@ -45,49 +31,130 @@ async function refreshAccessToken(id) {
     const { data } = await axios.post(
       'https://services.leadconnectorhq.com/oauth/token',
       body,
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
+      { 
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, 
+        timeout: 15000 
+      }
     );
 
+    // Update token data
     inst.accessToken = data.access_token;
     inst.refreshToken = data.refresh_token || inst.refreshToken;
     inst.expiresIn = data.expires_in;
-    inst.expiresAt = Date.now() + data.expires_in * 1000;
+    inst.expiresAt = Date.now() + (data.expires_in * 1000);
     inst.tokenStatus = 'valid';
+    inst.lastRefresh = new Date().toISOString();
     
-    console.log(`[REFRESH] Token updated for ${id}`);
+    console.log(`[REFRESH] ✅ Token refreshed for ${id}, expires: ${new Date(inst.expiresAt).toISOString()}`);
     return true;
+    
   } catch (error) {
-    console.error(`[REFRESH] Failed for ${id}:`, error.response?.data || error.message);
-    inst.tokenStatus = 'failed';
+    console.error(`[REFRESH] ❌ Failed for ${id}:`, error.response?.data || error.message);
+    inst.tokenStatus = 'refresh_failed';
+    inst.lastRefreshError = error.response?.data || error.message;
     return false;
   }
 }
 
 async function ensureFreshToken(id) {
   const inst = installations.get(id);
-  if (!inst) throw new Error('Unknown installation');
-  
-  const timeUntilExpiry = inst.expiresAt - Date.now();
-  if (timeUntilExpiry < 5 * 60 * 1000) { // 5 minutes padding
-    await refreshAccessToken(id);
+  if (!inst) {
+    throw new Error(`Installation ${id} not found`);
   }
   
-  if (inst.tokenStatus !== 'valid') throw new Error('Token invalid');
+  // Check if token is close to expiry (80% of lifetime)
+  const timeUntilExpiry = inst.expiresAt - Date.now();
+  const tokenLifetime = inst.expiresIn * 1000;
+  const refreshThreshold = tokenLifetime * 0.2; // Refresh at 80% lifetime
+  
+  console.log(`[TOKEN] ${id}: ${Math.round(timeUntilExpiry/1000)}s until expiry`);
+  
+  if (timeUntilExpiry < refreshThreshold) {
+    console.log(`[TOKEN] Token near expiry, refreshing...`);
+    const refreshed = await refreshAccessToken(id);
+    if (!refreshed) {
+      throw new Error(`Token refresh failed for ${id}`);
+    }
+  }
+  
+  if (inst.tokenStatus !== 'valid') {
+    throw new Error(`Token invalid for ${id}: ${inst.tokenStatus}`);
+  }
+  
   return inst;
+}
+
+// AUTO-RETRY API WRAPPER
+async function makeGHLAPICall(installation_id, requestConfig, maxRetries = 3) {
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[API] Attempt ${attempt}/${maxRetries} for ${requestConfig.url}`);
+      
+      // Ensure fresh token before each attempt
+      const installation = await ensureFreshToken(installation_id);
+      
+      // Add authorization header
+      const config = {
+        ...requestConfig,
+        headers: {
+          'Authorization': `Bearer ${installation.accessToken}`,
+          'Version': '2021-07-28',
+          'Content-Type': 'application/json',
+          ...requestConfig.headers
+        },
+        timeout: 15000
+      };
+      
+      const response = await axios(config);
+      console.log(`[API] ✅ Success on attempt ${attempt}`);
+      return response;
+      
+    } catch (error) {
+      lastError = error;
+      console.log(`[API] ❌ Attempt ${attempt} failed:`, error.response?.data?.message || error.message);
+      
+      // If 401, try token refresh
+      if (error.response?.status === 401 && attempt < maxRetries) {
+        console.log(`[API] 401 error - attempting token refresh...`);
+        try {
+          await refreshAccessToken(installation_id);
+          console.log(`[API] Token refreshed, retrying...`);
+          continue;
+        } catch (refreshError) {
+          console.log(`[API] Token refresh failed:`, refreshError.message);
+        }
+      }
+      
+      // If not retryable or max attempts reached, break
+      if (attempt === maxRetries || ![401, 429, 503].includes(error.response?.status)) {
+        break;
+      }
+      
+      // Wait before retry
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+    }
+  }
+  
+  throw lastError;
 }
 
 // BASIC ROUTES
 app.get('/', (req, res) => {
   res.json({
     service: "GoHighLevel OAuth Backend",
-    version: "5.5.1-installation-restored",
+    version: "5.6.0-auto-retry",
     status: "operational",
     installs: installations.size,
     authenticated: Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length,
-    features: ["oauth", "products", "token-refresh"],
+    features: ["oauth", "products", "auto-retry", "smart-refresh"],
     endpoints: ["/api/products/create", "/api/products", "/installations"],
-    restored: "install_1751343410712",
-    ready: true
+    autoRetry: {
+      maxRetries: 3,
+      refreshThreshold: "80% token lifetime",
+      retryableErrors: [401, 429, 503]
+    }
   });
 });
 
@@ -98,7 +165,9 @@ app.get('/installations', (req, res) => {
     tokenStatus: inst.tokenStatus,
     createdAt: inst.createdAt,
     expiresAt: inst.expiresAt,
-    restored: inst.restored || false
+    timeUntilExpiry: Math.max(0, Math.round((inst.expiresAt - Date.now()) / 1000)),
+    lastRefresh: inst.lastRefresh,
+    lastRefreshError: inst.lastRefreshError
   }));
   
   res.json({
@@ -107,7 +176,7 @@ app.get('/installations', (req, res) => {
   });
 });
 
-// OAUTH CALLBACK - For new installations
+// OAUTH CALLBACK
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   console.log('=== OAUTH CALLBACK ===');
   const { code, error } = req.query;
@@ -142,19 +211,21 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
       accessToken: tokenResponse.data.access_token,
       refreshToken: tokenResponse.data.refresh_token,
       expiresIn: tokenResponse.data.expires_in,
-      expiresAt: Date.now() + tokenResponse.data.expires_in * 1000,
+      expiresAt: Date.now() + (tokenResponse.data.expires_in * 1000),
       locationId: tokenResponse.data.locationId || 'WAvk87RmW9rBSDJHeOpH',
       scopes: tokenResponse.data.scope || '',
       tokenStatus: 'valid',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      lastRefresh: null
     });
 
-    console.log(`[INSTALL] ${id} created successfully`);
+    console.log(`[INSTALL] ✅ ${id} created with auto-retry protection`);
     
     res.json({
       success: true,
       installationId: id,
-      message: 'OAuth installation successful'
+      message: 'OAuth installation successful with auto-retry protection',
+      features: ['auto-retry', 'smart-refresh', 'token-monitoring']
     });
 
   } catch (error) {
@@ -167,12 +238,12 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   }
 });
 
-// PRODUCT CREATION
+// ENHANCED PRODUCT CREATION WITH AUTO-RETRY
 app.post('/api/products/create', async (req, res) => {
   try {
     const { name, description, productType, sku, currency, installation_id } = req.body;
     
-    console.log(`[PRODUCT] Creating: ${name}`);
+    console.log(`[PRODUCT] Creating: ${name} (auto-retry enabled)`);
     
     if (!installation_id) {
       return res.status(400).json({ success: false, error: 'installation_id required' });
@@ -182,58 +253,45 @@ app.post('/api/products/create', async (req, res) => {
       return res.status(400).json({ success: false, error: 'product name required' });
     }
     
-    const installation = await ensureFreshToken(installation_id);
-    
     const productData = {
       name,
       description: description || '',
       productType: productType || 'DIGITAL',
-      locationId: installation.locationId,
+      locationId: installations.get(installation_id)?.locationId || 'WAvk87RmW9rBSDJHeOpH',
       ...(sku && { sku }),
       ...(currency && { currency })
     };
     
-    console.log(`[PRODUCT] Sending to GHL:`, productData);
+    console.log(`[PRODUCT] Sending to GHL with auto-retry:`, productData);
     
-    const productResponse = await axios.post('https://services.leadconnectorhq.com/products/', productData, {
-      headers: {
-        'Authorization': `Bearer ${installation.accessToken}`,
-        'Version': '2021-07-28',
-        'Content-Type': 'application/json'
-      },
-      timeout: 15000
+    // Use auto-retry wrapper
+    const productResponse = await makeGHLAPICall(installation_id, {
+      method: 'POST',
+      url: 'https://services.leadconnectorhq.com/products/',
+      data: productData
     });
     
-    console.log(`[PRODUCT] Created successfully: ${productResponse.data.product?.id || 'unknown'}`);
+    console.log(`[PRODUCT] ✅ Created successfully: ${productResponse.data.product?.id || 'unknown'}`);
     
     res.json({
       success: true,
       product: productResponse.data.product || productResponse.data,
-      message: 'Product created successfully'
+      message: 'Product created successfully with auto-retry protection'
     });
     
   } catch (error) {
-    console.error('[PRODUCT] Creation error:', error.response?.data || error.message);
-    
-    // Try token refresh on 401
-    if (error.response?.status === 401) {
-      try {
-        console.log('[PRODUCT] Attempting token refresh...');
-        await refreshAccessToken(req.body.installation_id);
-      } catch (refreshError) {
-        console.error('[PRODUCT] Token refresh failed:', refreshError.message);
-      }
-    }
+    console.error('[PRODUCT] ❌ Final error after all retries:', error.response?.data || error.message);
     
     res.status(500).json({
       success: false,
       error: error.response?.data || error.message,
-      message: 'Failed to create product'
+      message: 'Failed to create product after all retry attempts',
+      retryAttempts: 'exhausted'
     });
   }
 });
 
-// PRODUCT LISTING
+// ENHANCED PRODUCT LISTING WITH AUTO-RETRY
 app.get('/api/products', async (req, res) => {
   try {
     const { installation_id } = req.query;
@@ -242,17 +300,20 @@ app.get('/api/products', async (req, res) => {
       return res.status(400).json({ success: false, error: 'installation_id required' });
     }
     
-    const installation = await ensureFreshToken(installation_id);
+    console.log(`[PRODUCTS] Listing with auto-retry for ${installation_id}`);
     
-    const productsResponse = await axios.get('https://services.leadconnectorhq.com/products/', {
-      headers: {
-        'Authorization': `Bearer ${installation.accessToken}`,
-        'Version': '2021-07-28'
-      },
+    const installation = installations.get(installation_id);
+    if (!installation) {
+      return res.status(400).json({ success: false, error: 'Installation not found' });
+    }
+    
+    // Use auto-retry wrapper
+    const productsResponse = await makeGHLAPICall(installation_id, {
+      method: 'GET',
+      url: 'https://services.leadconnectorhq.com/products/',
       params: {
         locationId: installation.locationId
-      },
-      timeout: 15000
+      }
     });
     
     res.json({
@@ -262,7 +323,7 @@ app.get('/api/products', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('[PRODUCTS] List error:', error.response?.data || error.message);
+    console.error('[PRODUCTS] ❌ List error after retries:', error.response?.data || error.message);
     res.status(500).json({
       success: false,
       error: error.response?.data || error.message
@@ -270,12 +331,8 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Restore installation on startup
-restoreInstallation();
-
 app.listen(port, () => {
-  console.log(`✅ OAuth Backend with restored installation running on port ${port}`);
-  console.log(`📊 Features: OAuth, Product Creation`);
-  console.log(`🔗 Endpoints: /api/products/create, /api/products`);
-  console.log(`📦 Installations: ${installations.size} (restored: install_1751343410712)`);
+  console.log(`✅ Auto-Retry OAuth Backend running on port ${port}`);
+  console.log(`🔄 Features: Smart token refresh, automatic retries, 401 handling`);
+  console.log(`📊 Retry Policy: 3 attempts, 80% token refresh threshold`);
 });
