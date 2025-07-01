@@ -1,80 +1,72 @@
 /**
- * Enhanced OAuth Backend v5.9.0-image-upload
- * Adds GoHighLevel image upload functionality with proper token management
+ * OAuth Backend v5.9.1-image-upload-fixed
+ * Simplified implementation with image upload for GoHighLevel
  */
 
 const express = require('express');
-const app = express();
-const port = process.env.PORT || 3000;
 const multer = require('multer');
 const FormData = require('form-data');
 const axios = require('axios');
 
-// Configure multer for image uploads
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Configure multer for memory storage
 const upload = multer({ 
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 } // 25MB limit
+  limits: { fileSize: 25 * 1024 * 1024 } // 25MB
 });
 
+// Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS configuration  
+// CORS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
-// Enhanced in-memory installation storage with token management
+// In-memory installations storage
 const installations = new Map();
 
+// OAuth environment variables
+const GHL_CLIENT_ID = process.env.GHL_CLIENT_ID || 'YOUR_GHL_CLIENT_ID';
+const GHL_CLIENT_SECRET = process.env.GHL_CLIENT_SECRET || 'YOUR_GHL_CLIENT_SECRET';
+const GHL_REDIRECT_URI = process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/oauth/callback';
+
 // Token refresh utility
-async function ensureFreshToken(installation) {
-  console.log(`Checking token freshness for ${installation.id}`);
-  
+async function refreshTokenIfNeeded(installation) {
   const now = Date.now();
   const timeUntilExpiry = installation.expiresAt - now;
-  const hoursUntilExpiry = timeUntilExpiry / (1000 * 60 * 60);
-  
-  console.log(`Token expires in ${hoursUntilExpiry.toFixed(2)} hours`);
   
   // Refresh if expiring within 2 hours
   if (timeUntilExpiry < 2 * 60 * 60 * 1000) {
-    console.log('Token expiring soon, refreshing...');
+    console.log('Refreshing token for installation:', installation.id);
     
     try {
-      const refreshResponse = await fetch('https://services.leadconnectorhq.com/oauth/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          client_id: process.env.GHL_CLIENT_ID,
-          client_secret: process.env.GHL_CLIENT_SECRET,
-          refresh_token: installation.refreshToken
-        })
+      const response = await axios.post('https://services.leadconnectorhq.com/oauth/token', new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: GHL_CLIENT_ID,
+        client_secret: GHL_CLIENT_SECRET,
+        refresh_token: installation.refreshToken
+      }), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
 
-      if (refreshResponse.ok) {
-        const tokenData = await refreshResponse.json();
-        installation.accessToken = tokenData.access_token;
-        installation.expiresAt = now + (tokenData.expires_in * 1000);
-        installation.tokenStatus = 'valid';
-        
-        console.log('✅ Token refreshed successfully');
-        return installation.accessToken;
-      } else {
-        console.error('❌ Token refresh failed:', refreshResponse.status);
-        installation.tokenStatus = 'expired';
-        return null;
-      }
+      const tokenData = response.data;
+      installation.accessToken = tokenData.access_token;
+      installation.expiresAt = now + (tokenData.expires_in * 1000);
+      installation.tokenStatus = 'valid';
+      
+      console.log('✅ Token refreshed successfully');
+      return installation.accessToken;
     } catch (error) {
-      console.error('❌ Token refresh error:', error);
-      installation.tokenStatus = 'error';
+      console.error('❌ Token refresh failed:', error.response?.data || error.message);
+      installation.tokenStatus = 'expired';
       return null;
     }
   }
@@ -82,9 +74,8 @@ async function ensureFreshToken(installation) {
   return installation.accessToken;
 }
 
-// OAuth callback endpoint
+// OAuth callback
 app.get('/oauth/callback', async (req, res) => {
-  console.log('=== OAuth Callback Hit ===');
   const { code, error } = req.query;
   
   if (error) {
@@ -93,70 +84,60 @@ app.get('/oauth/callback', async (req, res) => {
   }
   
   if (!code) {
-    console.log('No code parameter - test endpoint');
     return res.send('OAuth callback endpoint is working!');
   }
   
   try {
-    console.log('🔄 Exchanging authorization code for access token...');
+    console.log('🔄 Processing OAuth callback...');
     
-    // Exchange authorization code for access token
-    const tokenResponse = await fetch('https://services.leadconnectorhq.com/oauth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: process.env.GHL_CLIENT_ID,
-        client_secret: process.env.GHL_CLIENT_SECRET,
-        code: String(code),
-        redirect_uri: process.env.GHL_REDIRECT_URI
-      })
+    // Exchange code for token
+    const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: GHL_CLIENT_ID,
+      client_secret: GHL_CLIENT_SECRET,
+      code: String(code),
+      redirect_uri: GHL_REDIRECT_URI
+    }), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
-    if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      console.error('❌ Token exchange failed:', tokenResponse.status, errorText);
-      throw new Error(`Token exchange failed: ${tokenResponse.status}`);
-    }
-
-    const tokenData = await tokenResponse.json();
+    const tokenData = tokenResponse.data;
     console.log('✅ Token exchange successful');
 
-    // Fetch user and location information
-    const userResponse = await fetch('https://services.leadconnectorhq.com/users/me', {
+    // Get user info
+    const userResponse = await axios.get('https://services.leadconnectorhq.com/users/me', {
       headers: {
         'Authorization': `Bearer ${tokenData.access_token}`,
         'Version': '2021-07-28'
       }
     });
 
-    const userData = await userResponse.json();
-    
-    // Get location data
-    const locationResponse = await fetch('https://services.leadconnectorhq.com/locations/', {
-      headers: {
-        'Authorization': `Bearer ${tokenData.access_token}`,
-        'Version': '2021-07-28'
-      }
-    });
+    const userData = userResponse.data;
 
+    // Get location info
     let locationData = null;
-    if (locationResponse.ok) {
-      const locationResult = await locationResponse.json();
-      if (locationResult.locations && locationResult.locations.length > 0) {
-        locationData = locationResult.locations[0];
+    try {
+      const locationResponse = await axios.get('https://services.leadconnectorhq.com/locations/', {
+        headers: {
+          'Authorization': `Bearer ${tokenData.access_token}`,
+          'Version': '2021-07-28'
+        }
+      });
+      
+      if (locationResponse.data.locations && locationResponse.data.locations.length > 0) {
+        locationData = locationResponse.data.locations[0];
       }
+    } catch (locationError) {
+      console.log('Location data not available');
     }
 
-    // Store installation data
+    // Store installation
     const installationId = `install_${Date.now()}`;
-    const expiryTime = Date.now() + (tokenData.expires_in * 1000);
-    
     const installation = {
       id: installationId,
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token,
-      expiresAt: expiryTime,
+      expiresAt: Date.now() + (tokenData.expires_in * 1000),
       tokenStatus: 'valid',
       userId: userData.id,
       userEmail: userData.email,
@@ -170,22 +151,17 @@ app.get('/oauth/callback', async (req, res) => {
     installations.set(installationId, installation);
     
     console.log('✅ Installation stored:', installationId);
-    console.log('   Location ID:', installation.locationId);
-    console.log('   User:', installation.userName);
     
-    // Redirect to frontend with success
-    const redirectUrl = `https://listings.engageautomations.com/?installation_id=${installationId}&welcome=true`;
-    console.log('🎉 Redirecting to frontend:', redirectUrl);
-    return res.redirect(redirectUrl);
+    // Redirect to frontend
+    return res.redirect(`https://listings.engageautomations.com/?installation_id=${installationId}&welcome=true`);
     
   } catch (error) {
-    console.error('❌ OAuth callback error:', error);
-    const errorUrl = `https://listings.engageautomations.com/?error=oauth_failed&message=${encodeURIComponent(error.message)}`;
-    return res.redirect(errorUrl);
+    console.error('❌ OAuth error:', error.response?.data || error.message);
+    return res.redirect(`https://listings.engageautomations.com/?error=oauth_failed`);
   }
 });
 
-// Image Upload API Endpoint
+// Image Upload API
 app.post('/api/images/upload', upload.single('file'), async (req, res) => {
   console.log('=== Image Upload Request ===');
   
@@ -200,11 +176,7 @@ app.post('/api/images/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ success: false, error: 'No file uploaded' });
     }
     
-    console.log('File details:', {
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size
-    });
+    console.log('File:', req.file.originalname, 'Size:', req.file.size);
     
     // Get installation
     const installation = installations.get(installation_id);
@@ -212,32 +184,29 @@ app.post('/api/images/upload', upload.single('file'), async (req, res) => {
       return res.status(404).json({ 
         success: false, 
         error: 'Installation not found',
-        available_installations: Array.from(installations.keys())
+        available: Array.from(installations.keys())
       });
     }
     
-    console.log(`Using installation ${installation_id} with location ${installation.locationId}`);
-    
-    // Ensure fresh token
-    const accessToken = await ensureFreshToken(installation);
+    // Refresh token if needed
+    const accessToken = await refreshTokenIfNeeded(installation);
     if (!accessToken) {
       return res.status(401).json({
         success: false,
-        error: 'OAuth token invalid or expired',
-        tokenStatus: installation.tokenStatus
+        error: 'Token expired or invalid'
       });
     }
     
-    // Create form data for GoHighLevel API
+    // Create form data for GoHighLevel
     const formData = new FormData();
     formData.append('file', req.file.buffer, {
       filename: req.file.originalname,
       contentType: req.file.mimetype
     });
     
-    console.log('🚀 Uploading to GoHighLevel media library...');
+    console.log('🚀 Uploading to GoHighLevel...');
     
-    // Upload to GoHighLevel using the correct API endpoint
+    // Upload to GoHighLevel media library
     const uploadResponse = await axios.post('https://services.leadconnectorhq.com/medias/upload-file', formData, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -249,47 +218,28 @@ app.post('/api/images/upload', upload.single('file'), async (req, res) => {
       maxBodyLength: Infinity
     });
     
-    console.log('✅ Image uploaded to GoHighLevel successfully!');
-    console.log('Media response:', uploadResponse.data);
+    console.log('✅ Upload successful!');
     
     res.json({
       success: true,
       media: uploadResponse.data,
-      installation: {
-        id: installation_id,
-        locationId: installation.locationId,
-        tokenStatus: installation.tokenStatus
-      },
-      message: 'Image uploaded to GoHighLevel media library successfully'
+      message: 'Image uploaded to GoHighLevel media library'
     });
     
   } catch (error) {
-    console.error('❌ Image upload error:', error);
+    console.error('❌ Upload error:', error.response?.data || error.message);
     
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-      
-      res.status(error.response.status).json({
-        success: false,
-        error: error.response.data?.message || 'GoHighLevel API error',
-        details: error.response.data,
-        ghl_status: error.response.status
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: error.message || 'Image upload failed',
-        details: error.message
-      });
-    }
+    res.status(error.response?.status || 500).json({
+      success: false,
+      error: error.response?.data?.message || error.message || 'Upload failed'
+    });
   }
 });
 
-// List Media Files API
+// Media listing API
 app.get('/api/images/list', async (req, res) => {
   try {
-    const { installation_id, limit = 20, offset = 0 } = req.query;
+    const { installation_id } = req.query;
     
     if (!installation_id) {
       return res.status(400).json({ success: false, error: 'installation_id required' });
@@ -300,39 +250,27 @@ app.get('/api/images/list', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Installation not found' });
     }
     
-    // Ensure fresh token
-    const accessToken = await ensureFreshToken(installation);
+    const accessToken = await refreshTokenIfNeeded(installation);
     if (!accessToken) {
-      return res.status(401).json({
-        success: false,
-        error: 'OAuth token invalid or expired'
-      });
+      return res.status(401).json({ success: false, error: 'Token expired' });
     }
     
-    // Get media files from GoHighLevel
-    const mediaResponse = await axios.get('https://services.leadconnectorhq.com/medias/', {
+    const response = await axios.get('https://services.leadconnectorhq.com/medias/', {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Version': '2021-07-28'
-      },
-      params: { limit, offset }
+      }
     });
     
     res.json({
       success: true,
-      media: mediaResponse.data.medias || [],
-      pagination: {
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        total: mediaResponse.data.total || 0
-      }
+      media: response.data.medias || []
     });
     
   } catch (error) {
-    console.error('Media list error:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to list media files'
+      error: error.message
     });
   }
 });
@@ -344,7 +282,6 @@ app.get('/installations', (req, res) => {
     locationId: inst.locationId,
     locationName: inst.locationName,
     userName: inst.userName,
-    userEmail: inst.userEmail,
     tokenStatus: inst.tokenStatus,
     createdAt: inst.createdAt,
     expiresAt: inst.expiresAt,
@@ -355,7 +292,7 @@ app.get('/installations', (req, res) => {
     installations: installationList,
     count: installationList.length,
     frontend: 'https://listings.engageautomations.com',
-    note: 'OAuth backend with image upload functionality'
+    note: 'OAuth backend with image upload'
   });
 });
 
@@ -363,17 +300,23 @@ app.get('/installations', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
-    version: '5.9.0-image-upload',
-    features: ['oauth', 'token-refresh', 'image-upload', 'media-listing'],
-    installations: installations.size,
-    timestamp: Date.now()
+    version: '5.9.1-image-upload-fixed',
+    features: ['oauth', 'image-upload'],
+    installations: installations.size
   });
 });
 
-// Start server
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    service: 'GoHighLevel OAuth Backend',
+    version: '5.9.1-image-upload-fixed',
+    endpoints: ['/oauth/callback', '/api/images/upload', '/api/images/list', '/installations'],
+    status: 'operational'
+  });
+});
+
 app.listen(port, () => {
-  console.log(`OAuth Backend v5.9.0-image-upload running on port ${port}`);
-  console.log('Features: OAuth + Token Refresh + Image Upload');
-  console.log('Image upload endpoint: POST /api/images/upload');
-  console.log('Media listing endpoint: GET /api/images/list');
+  console.log(`OAuth Backend v5.9.1 running on port ${port}`);
+  console.log('Image upload endpoints ready');
 });
