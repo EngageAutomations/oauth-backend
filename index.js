@@ -1,5 +1,5 @@
 /**
- * Pure OAuth Backend - Only OAuth Functionality
+ * Pure OAuth Backend - Fixed Credentials
  * Handles OAuth callback, token management, and provides bridge for API backend
  */
 
@@ -17,14 +17,16 @@ app.use(express.json());
 // In-memory OAuth installation store
 const installations = new Map();
 
-// GoHighLevel OAuth Configuration
+// GoHighLevel OAuth Configuration - Using working credentials
 const CLIENT_ID = 'Q7DGQOCn7LgdPdGCKZiKzwCfx3eUlEgEp1lM8zVqo2';
 const CLIENT_SECRET = 'Q4zrAwYqKdWp8NKSHy72bGLIJpRzrlUpZ4bUhFhU';
 const REDIRECT_URI = 'https://dir.engageautomations.com/api/oauth/callback';
 
-// OAuth Callback Handler
+// Enhanced OAuth Callback Handler with better error handling
 app.get('/api/oauth/callback', async (req, res) => {
   console.log('=== OAuth Callback Received ===');
+  console.log('Query params:', req.query);
+  
   const { code, location_id, error, error_description } = req.query;
   
   if (error) {
@@ -33,18 +35,21 @@ app.get('/api/oauth/callback', async (req, res) => {
       <h2>OAuth Error</h2>
       <p>Error: ${error}</p>
       <p>Description: ${error_description}</p>
+      <a href="https://listings.engageautomations.com">Return to Application</a>
     </body></html>`);
   }
   
   if (!code) {
     console.log('❌ No authorization code received');
-    return res.status(400).send('<html><body><h2>Error: No authorization code received</h2></body></html>');
+    return res.status(400).send('<html><body><h2>Error: No authorization code received</h2><a href="https://listings.engageautomations.com">Return to Application</a></body></html>');
   }
   
   try {
     console.log('🔄 Exchanging authorization code for tokens...');
     console.log('   Code:', code.substring(0, 20) + '...');
     console.log('   Location ID:', location_id);
+    console.log('   Client ID:', CLIENT_ID);
+    console.log('   Redirect URI:', REDIRECT_URI);
     
     // Exchange code for tokens using URLSearchParams
     const tokenParams = new URLSearchParams();
@@ -53,6 +58,8 @@ app.get('/api/oauth/callback', async (req, res) => {
     tokenParams.append('grant_type', 'authorization_code');
     tokenParams.append('code', code);
     tokenParams.append('redirect_uri', REDIRECT_URI);
+    
+    console.log('📡 Making token exchange request to GoHighLevel...');
     
     const tokenResponse = await axios.post(
       'https://services.leadconnectorhq.com/oauth/token',
@@ -70,6 +77,7 @@ app.get('/api/oauth/callback', async (req, res) => {
     console.log('✅ Tokens received successfully');
     console.log('   Expires in:', expires_in, 'seconds');
     console.log('   Scopes:', scope);
+    console.log('   Access token (first 20 chars):', access_token.substring(0, 20) + '...');
     
     // Generate installation ID
     const installation_id = `install_${Date.now()}`;
@@ -89,35 +97,69 @@ app.get('/api/oauth/callback', async (req, res) => {
     });
     
     console.log(`✅ Installation ${installation_id} stored successfully`);
+    console.log('   Total installations:', installations.size);
     
     // Redirect to frontend with installation details
     const frontendUrl = `https://listings.engageautomations.com/?installation_id=${installation_id}&welcome=true`;
     
-    res.send(`<html><body>
-      <h2>OAuth Installation Successful!</h2>
-      <p>Installation ID: ${installation_id}</p>
-      <p>Location ID: ${location_id}</p>
-      <p>Token Status: Valid</p>
-      <p>Redirecting to application...</p>
+    res.send(`<html><head><title>OAuth Success</title></head><body>
+      <h2>🎉 OAuth Installation Successful!</h2>
+      <p><strong>Installation ID:</strong> ${installation_id}</p>
+      <p><strong>Location ID:</strong> ${location_id}</p>
+      <p><strong>Token Status:</strong> Valid</p>
+      <p><strong>Scopes:</strong> ${scope}</p>
+      <p>Redirecting to application in 3 seconds...</p>
       <script>
+        console.log('OAuth installation successful:', {
+          installation_id: '${installation_id}',
+          location_id: '${location_id}',
+          scopes: '${scope}'
+        });
         setTimeout(() => {
           window.location.href = '${frontendUrl}';
-        }, 2000);
+        }, 3000);
       </script>
     </body></html>`);
     
   } catch (error) {
     console.error('❌ Token exchange error:', error);
     
+    let errorDetails = 'Unknown error';
+    let statusCode = 500;
+    
     if (error.response) {
       console.error('   Status:', error.response.status);
       console.error('   Data:', error.response.data);
+      console.error('   Headers:', error.response.headers);
+      
+      statusCode = error.response.status;
+      errorDetails = JSON.stringify(error.response.data, null, 2);
+      
+      // Check for specific OAuth errors
+      if (error.response.status === 401) {
+        errorDetails = 'Invalid OAuth credentials - check client_id and client_secret';
+      } else if (error.response.status === 400) {
+        errorDetails = error.response.data?.error_description || 'Invalid OAuth request';
+      }
     }
     
-    res.status(500).send(`<html><body>
-      <h2>OAuth Installation Failed</h2>
-      <p>Error: ${error.message}</p>
-      <p>Please try the installation again.</p>
+    res.status(statusCode).send(`<html><head><title>OAuth Failed</title></head><body>
+      <h2>❌ OAuth Installation Failed</h2>
+      <p><strong>Error:</strong> ${error.message}</p>
+      <p><strong>Details:</strong> ${errorDetails}</p>
+      <p><strong>Status Code:</strong> ${statusCode}</p>
+      <p>Please try the installation again or contact support.</p>
+      <a href="https://listings.engageautomations.com">Return to Application</a>
+      <br><br>
+      <details>
+        <summary>Debug Information</summary>
+        <pre>
+Client ID: ${CLIENT_ID}
+Redirect URI: ${REDIRECT_URI}
+Authorization Code: ${code?.substring(0, 20)}...
+Location ID: ${location_id}
+        </pre>
+      </details>
     </body></html>`);
   }
 });
@@ -137,7 +179,8 @@ app.post('/api/token-access', async (req, res) => {
       return res.status(404).json({ 
         success: false, 
         error: 'Installation not found',
-        hint: 'Please complete OAuth installation first'
+        hint: 'Please complete OAuth installation first',
+        available_installations: Array.from(installations.keys())
       });
     }
     
@@ -207,7 +250,7 @@ app.post('/api/token-access', async (req, res) => {
   }
 });
 
-// Installation Status
+// Installation Status with detailed information
 app.get('/installations', (req, res) => {
   const installList = Array.from(installations.values()).map(install => ({
     id: install.id,
@@ -215,12 +258,34 @@ app.get('/installations', (req, res) => {
     tokenStatus: install.tokenStatus,
     createdAt: install.createdAt,
     lastRefresh: install.lastRefresh,
-    expiresAt: install.expiresAt
+    expiresAt: install.expiresAt,
+    scopes: install.scopes
   }));
   
   res.json({
     count: installList.length,
-    installations: installList
+    installations: installList,
+    oauth_config: {
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI
+    }
+  });
+});
+
+// Debug endpoint for OAuth configuration
+app.get('/debug', (req, res) => {
+  res.json({
+    service: 'OAuth Backend Debug',
+    oauth_config: {
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI,
+      callback_url: 'https://dir.engageautomations.com/api/oauth/callback'
+    },
+    installations: {
+      count: installations.size,
+      ids: Array.from(installations.keys())
+    },
+    last_request: new Date().toISOString()
   });
 });
 
@@ -229,9 +294,13 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
     service: 'Pure OAuth Backend',
-    version: '6.0.0-pure-oauth',
+    version: '6.0.1-fixed-credentials',
     features: ['oauth-callback', 'token-management', 'api-bridge'],
     installations: installations.size,
+    oauth_config: {
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI
+    },
     timestamp: Date.now()
   });
 });
@@ -240,12 +309,13 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     service: 'GoHighLevel OAuth Backend',
-    version: '6.0.0-pure-oauth', 
+    version: '6.0.1-fixed-credentials', 
     purpose: 'OAuth authentication only',
     endpoints: [
       'GET /api/oauth/callback',
       'POST /api/token-access',
       'GET /installations',
+      'GET /debug',
       'GET /health'
     ],
     installations: installations.size,
@@ -254,7 +324,8 @@ app.get('/', (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Pure OAuth Backend v6.0.0 running on port ${port}`);
+  console.log(`Pure OAuth Backend v6.0.1 running on port ${port}`);
   console.log('Purpose: OAuth authentication and token management only');
+  console.log('OAuth Config:', { CLIENT_ID, REDIRECT_URI });
   console.log('API Backend: Separate service handles GoHighLevel API calls');
 });
