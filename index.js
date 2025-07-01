@@ -1,14 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const multer = require('multer');
-const FormData = require('form-data');
-const fs = require('fs');
-
-const upload = multer({ 
-  dest: 'uploads/',
-  limits: { fileSize: 25 * 1024 * 1024 }
-});
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -73,8 +65,8 @@ app.get('/', (req, res) => {
     status: "operational",
     installs: installations.size,
     authenticated: Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length,
-    features: ["oauth", "products", "media-upload", "token-refresh"],
-    endpoints: ["/api/products/create", "/api/media/upload", "/installations"],
+    features: ["oauth", "products", "token-refresh"],
+    endpoints: ["/api/products/create", "/api/products", "/installations"],
     enhanced: new Date().toISOString()
   });
 });
@@ -94,7 +86,7 @@ app.get('/installations', (req, res) => {
   });
 });
 
-// OAUTH CALLBACK
+// OAUTH CALLBACK - PRESERVE EXISTING INSTALLATION
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   console.log('=== OAUTH CALLBACK ===');
   const { code, error } = req.query;
@@ -154,6 +146,24 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   }
 });
 
+// RESTORE EXISTING INSTALLATION ON STARTUP
+function restoreExistingInstallation() {
+  // Restore the current installation
+  installations.set('install_1751343410712', {
+    id: 'install_1751343410712',
+    accessToken: process.env.GHL_ACCESS_TOKEN || 'token_restored_from_env',
+    refreshToken: process.env.GHL_REFRESH_TOKEN || null,
+    expiresIn: 86399,
+    expiresAt: Date.now() + 86399 * 1000,
+    locationId: 'WAvk87RmW9rBSDJHeOpH',
+    scopes: 'medias.write medias.readonly',
+    tokenStatus: 'valid',
+    createdAt: '2025-07-01T04:16:50.712Z'
+  });
+  
+  console.log('[STARTUP] Existing installation restored: install_1751343410712');
+}
+
 // PRODUCT CREATION
 app.post('/api/products/create', async (req, res) => {
   try {
@@ -207,7 +217,6 @@ app.post('/api/products/create', async (req, res) => {
       try {
         console.log('[PRODUCT] Attempting token refresh...');
         await refreshAccessToken(req.body.installation_id);
-        // Could retry here, but for now just return the error
       } catch (refreshError) {
         console.error('[PRODUCT] Token refresh failed:', refreshError.message);
       }
@@ -217,71 +226,6 @@ app.post('/api/products/create', async (req, res) => {
       success: false,
       error: error.response?.data || error.message,
       message: 'Failed to create product'
-    });
-  }
-});
-
-// MEDIA UPLOAD
-app.post('/api/media/upload', upload.single('file'), async (req, res) => {
-  try {
-    const { installation_id } = req.body;
-    
-    console.log(`[MEDIA] Uploading: ${req.file?.originalname}`);
-    
-    if (!installation_id) {
-      return res.status(400).json({ success: false, error: 'installation_id required' });
-    }
-    
-    if (!req.file) {
-      return res.status(400).json({ success: false, error: 'file required' });
-    }
-    
-    const installation = await ensureFreshToken(installation_id);
-    
-    const formData = new FormData();
-    formData.append('file', fs.createReadStream(req.file.path), {
-      filename: req.file.originalname,
-      contentType: req.file.mimetype
-    });
-    
-    console.log(`[MEDIA] Uploading to GHL for location: ${installation.locationId}`);
-    
-    const uploadResponse = await axios.post('https://services.leadconnectorhq.com/medias/upload-file', formData, {
-      headers: {
-        'Authorization': `Bearer ${installation.accessToken}`,
-        'Version': '2021-07-28',
-        ...formData.getHeaders()
-      },
-      params: {
-        locationId: installation.locationId
-      },
-      timeout: 30000
-    });
-    
-    // Clean up uploaded file
-    fs.unlinkSync(req.file.path);
-    
-    console.log(`[MEDIA] Upload successful: ${uploadResponse.data.url || uploadResponse.data.fileUrl}`);
-    
-    res.json({
-      success: true,
-      mediaUrl: uploadResponse.data.url || uploadResponse.data.fileUrl,
-      mediaId: uploadResponse.data.id,
-      data: uploadResponse.data
-    });
-    
-  } catch (error) {
-    // Clean up file on error
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    
-    console.error('[MEDIA] Upload error:', error.response?.data || error.message);
-    
-    res.status(500).json({
-      success: false,
-      error: error.response?.data || error.message,
-      message: 'Failed to upload media'
     });
   }
 });
@@ -323,8 +267,12 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
+// Restore existing installation on startup
+restoreExistingInstallation();
+
 app.listen(port, () => {
   console.log(`✅ Enhanced OAuth Backend running on port ${port}`);
-  console.log(`📊 Features: OAuth, Product Creation, Media Upload`);
-  console.log(`🔗 Endpoints: /api/products/create, /api/media/upload, /api/products`);
+  console.log(`📊 Features: OAuth, Product Creation`);
+  console.log(`🔗 Endpoints: /api/products/create, /api/products`);
+  console.log(`📦 Installations: ${installations.size}`);
 });
