@@ -1,7 +1,7 @@
 {
   "name": "oauth-backend-emergency",
-  "version": "7.0.3-encoding-fixed",
-  "description": "OAuth backend with explicit form encoding fix",
+  "version": "7.0.0-production-ready",
+  "description": "Enhanced GoHighLevel OAuth backend with automatic retry system and proactive token refresh",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
