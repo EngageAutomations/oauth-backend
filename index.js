@@ -10,24 +10,24 @@ app.use(express.json());
 
 const installations = new Map();
 
-// OAUTH BRIDGE - Forward to Replit Application
+// OAUTH CALLBACK - Process and redirect to frontend
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
-  console.log('=== OAUTH BRIDGE CALLBACK ===');
+  console.log('=== OAUTH CALLBACK ===');
   const { code, error, state } = req.query;
   
   if (error) {
     console.error('OAuth error:', error);
-    return res.status(400).json({ error: 'OAuth error', details: error });
+    return res.redirect(`https://listings.engageautomations.com/oauth-error?error=${encodeURIComponent(error)}`);
   }
   
   if (!code) {
-    return res.status(400).json({ error: 'Authorization code required' });
+    return res.redirect('https://listings.engageautomations.com/oauth-error?error=missing_code');
   }
 
   try {
-    console.log('Received OAuth code, processing locally...');
+    console.log('Processing OAuth code and redirecting to frontend...');
     
-    // Process OAuth locally instead of forwarding
+    // Exchange authorization code for tokens
     const body = new URLSearchParams({
       client_id: process.env.GHL_CLIENT_ID,
       client_secret: process.env.GHL_CLIENT_SECRET,
@@ -42,9 +42,9 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
       timeout: 15000
     });
 
-    const id = `install_${Date.now()}`;
-    installations.set(id, {
-      id,
+    const installationId = `install_${Date.now()}`;
+    installations.set(installationId, {
+      id: installationId,
       accessToken: tokenResponse.data.access_token,
       refreshToken: tokenResponse.data.refresh_token,
       expiresIn: tokenResponse.data.expires_in,
@@ -55,79 +55,29 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
       createdAt: new Date().toISOString()
     });
 
-    console.log(`[INSTALL] ✅ ${id} created successfully`);
+    console.log(`[INSTALL] ✅ ${installationId} created successfully`);
     
-    // Return success page instead of JSON
-    const successHtml = `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>OAuth Success</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; padding: 20px; text-align: center; }
-        .success { color: #28a745; font-size: 24px; margin-bottom: 20px; }
-        .details { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }
-        .button { display: inline-block; background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 10px; }
-        .installation-id { font-family: monospace; background: #e9ecef; padding: 4px 8px; border-radius: 4px; }
-    </style>
-</head>
-<body>
-    <div class="success">✅ OAuth Installation Successful!</div>
+    // Redirect to frontend with installation details
+    const frontendUrl = `https://listings.engageautomations.com/?installation_id=${installationId}&welcome=true`;
+    console.log(`[REDIRECT] Sending user to frontend: ${frontendUrl}`);
     
-    <div class="details">
-        <h3>Installation Details</h3>
-        <p><strong>Installation ID:</strong> <span class="installation-id">${id}</span></p>
-        <p><strong>Location ID:</strong> <span class="installation-id">${installations.get(id).locationId}</span></p>
-        <p><strong>Token Status:</strong> Valid</p>
-        <p><strong>API Features:</strong> Product Creation, Media Upload, Auto-Retry</p>
-    </div>
-    
-    <p>Your GoHighLevel account has been successfully connected. You can now use the API endpoints for product creation and media management.</p>
-    
-    <a href="/installations" class="button">View Installation Details</a>
-    <a href="/" class="button">Back to Dashboard</a>
-</body>
-</html>
-`;
-
-    res.send(successHtml);
+    res.redirect(302, frontendUrl);
 
   } catch (error) {
     console.error('OAuth processing error:', error.response?.data || error.message);
     
-    const errorHtml = `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>OAuth Error</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; padding: 20px; text-align: center; }
-        .error { color: #dc3545; font-size: 24px; margin-bottom: 20px; }
-        .details { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }
-        .button { display: inline-block; background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 10px; }
-    </style>
-</head>
-<body>
-    <div class="error">❌ OAuth Installation Failed</div>
+    // Redirect to frontend error page with details
+    const errorParams = new URLSearchParams({
+      error: 'oauth_processing_failed',
+      details: error.response?.data?.message || error.message,
+      timestamp: new Date().toISOString()
+    });
     
-    <div class="details">
-        <h3>Error Details</h3>
-        <p><strong>Error:</strong> ${error.response?.data?.message || error.message}</p>
-        <p><strong>Time:</strong> ${new Date().toISOString()}</p>
-    </div>
-    
-    <p>There was an issue processing your OAuth installation. Please try again or contact support.</p>
-    
-    <a href="/" class="button">Try Again</a>
-</body>
-</html>
-`;
-
-    res.status(500).send(errorHtml);
+    res.redirect(`https://listings.engageautomations.com/oauth-error?${errorParams}`);
   }
 });
 
-// TOKEN HELPERS (for API functionality)
+// TOKEN MANAGEMENT FUNCTIONS
 async function refreshAccessToken(id) {
   const inst = installations.get(id);
   if (!inst || !inst.refreshToken) return false;
@@ -174,6 +124,43 @@ async function ensureFreshToken(id) {
   return inst;
 }
 
+// AUTO-RETRY API WRAPPER
+async function makeGHLAPICall(installationId, requestConfig, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const installation = await ensureFreshToken(installationId);
+      
+      const config = {
+        ...requestConfig,
+        headers: {
+          'Authorization': `Bearer ${installation.accessToken}`,
+          'Version': '2021-07-28',
+          'Content-Type': 'application/json',
+          ...requestConfig.headers
+        },
+        timeout: 15000
+      };
+      
+      const response = await axios(config);
+      console.log(`[API] Success on attempt ${attempt}`);
+      return response;
+      
+    } catch (error) {
+      console.log(`[API] Attempt ${attempt} failed:`, error.response?.status, error.response?.data?.message || error.message);
+      
+      if (error.response?.status === 401 && attempt < maxRetries) {
+        console.log(`[RETRY] Token expired, refreshing and retrying...`);
+        await refreshAccessToken(installationId);
+        continue;
+      }
+      
+      if (attempt === maxRetries) {
+        throw error;
+      }
+    }
+  }
+}
+
 // BASIC ROUTES
 app.get('/', (req, res) => {
   const html = `
@@ -192,26 +179,27 @@ app.get('/', (req, res) => {
 <body>
     <div class="header">
         <h1>🔗 GoHighLevel OAuth Backend</h1>
-        <p>Version 5.7.0-oauth-bridge | Status: Operational</p>
+        <p>Version 5.8.0-frontend-redirect | Status: Operational</p>
     </div>
     
     <div class="status">
         <h3>System Status</h3>
         <p><strong>Installations:</strong> ${installations.size}</p>
         <p><strong>Authenticated:</strong> ${Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length}</p>
+        <p><strong>Frontend:</strong> <a href="https://listings.engageautomations.com">listings.engageautomations.com</a></p>
         <p><strong>Last Updated:</strong> ${new Date().toISOString()}</p>
     </div>
     
     <h3>🚀 Features</h3>
     <div class="feature">OAuth Processing</div>
-    <div class="feature">Token Management</div>
-    <div class="feature">Product Creation</div>
+    <div class="feature">Frontend Redirect</div>
     <div class="feature">Auto-Retry System</div>
+    <div class="feature">Token Management</div>
     
     <h3>📡 API Endpoints</h3>
-    <div class="endpoint"><strong>POST</strong> /api/products/create - Create products</div>
-    <div class="endpoint"><strong>GET</strong> /api/products - List products</div>
+    <div class="endpoint"><strong>POST</strong> /api/products/create - Create products with auto-retry</div>
     <div class="endpoint"><strong>GET</strong> /installations - View installations</div>
+    <div class="endpoint"><strong>GET</strong> /api/token-health/:id - Token status</div>
 </body>
 </html>
 `;
@@ -231,11 +219,39 @@ app.get('/installations', (req, res) => {
   
   res.json({
     installations: installationsArray,
-    count: installationsArray.length
+    count: installationsArray.length,
+    frontend: 'https://listings.engageautomations.com'
   });
 });
 
-// PRODUCT CREATION API
+// TOKEN HEALTH CHECK
+app.get('/api/token-health/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const installation = installations.get(id);
+    
+    if (!installation) {
+      return res.status(404).json({ error: 'Installation not found' });
+    }
+    
+    const timeUntilExpiry = installation.expiresAt - Date.now();
+    const isExpiringSoon = timeUntilExpiry < 10 * 60 * 1000; // 10 minutes
+    
+    res.json({
+      installationId: id,
+      tokenStatus: installation.tokenStatus,
+      expiresAt: installation.expiresAt,
+      timeUntilExpiry: Math.max(0, Math.round(timeUntilExpiry / 1000)),
+      isExpiringSoon,
+      locationId: installation.locationId
+    });
+    
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PRODUCT CREATION WITH AUTO-RETRY
 app.post('/api/products/create', async (req, res) => {
   try {
     const { name, description, productType, sku, currency, installation_id } = req.body;
@@ -259,19 +275,16 @@ app.post('/api/products/create', async (req, res) => {
       ...(currency && { currency })
     };
     
-    const productResponse = await axios.post('https://services.leadconnectorhq.com/products/', productData, {
-      headers: {
-        'Authorization': `Bearer ${installation.accessToken}`,
-        'Version': '2021-07-28',
-        'Content-Type': 'application/json'
-      },
-      timeout: 15000
+    const response = await makeGHLAPICall(installation_id, {
+      method: 'POST',
+      url: 'https://services.leadconnectorhq.com/products/',
+      data: productData
     });
     
     res.json({
       success: true,
-      product: productResponse.data.product || productResponse.data,
-      message: 'Product created successfully via OAuth bridge'
+      product: response.data.product || response.data,
+      message: 'Product created successfully with auto-retry protection'
     });
     
   } catch (error) {
@@ -279,13 +292,13 @@ app.post('/api/products/create', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.response?.data || error.message,
-      message: 'Failed to create product'
+      message: 'Failed to create product after retries'
     });
   }
 });
 
 app.listen(port, () => {
-  console.log(`✅ OAuth Bridge Backend running on port ${port}`);
-  console.log(`🔗 OAuth processing: Local token exchange`);
-  console.log(`📊 User-friendly HTML responses for marketplace installations`);
+  console.log(`✅ OAuth Backend v5.8.0-frontend-redirect running on port ${port}`);
+  console.log(`🔗 OAuth processing with frontend redirect to listings.engageautomations.com`);
+  console.log(`🔄 Auto-retry system with 3 attempts and smart token refresh`);
 });
