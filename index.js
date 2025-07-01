@@ -1,20 +1,12 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const multer = require('multer');
-const FormData = require('form-data');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-
-// Configure multer for memory storage
-const upload = multer({ 
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 } // 25MB limit
-});
+app.use(express.json());
 
 const installations = new Map();
 
@@ -127,201 +119,7 @@ async function ensureFreshToken(id) {
   return inst;
 }
 
-// AUTO-RETRY API WRAPPER
-async function makeGHLAPICall(installationId, requestConfig, maxRetries = 3) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const installation = await ensureFreshToken(installationId);
-      
-      const config = {
-        ...requestConfig,
-        headers: {
-          'Authorization': `Bearer ${installation.accessToken}`,
-          'Version': '2021-07-28',
-          ...requestConfig.headers
-        },
-        timeout: 30000
-      };
-      
-      const response = await axios(config);
-      console.log(`[API] Success on attempt ${attempt}`);
-      return response;
-      
-    } catch (error) {
-      console.log(`[API] Attempt ${attempt} failed:`, error.response?.status, error.response?.data?.message || error.message);
-      
-      if (error.response?.status === 401 && attempt < maxRetries) {
-        console.log(`[RETRY] Token expired, refreshing and retrying...`);
-        await refreshAccessToken(installationId);
-        continue;
-      }
-      
-      if (attempt === maxRetries) {
-        throw error;
-      }
-    }
-  }
-}
-
-// IMAGE UPLOAD API ENDPOINT
-app.post('/api/images/upload', upload.single('file'), async (req, res) => {
-  try {
-    console.log('=== IMAGE UPLOAD REQUEST ===');
-    
-    const { installation_id } = req.body;
-    
-    if (!installation_id) {
-      return res.status(400).json({ success: false, error: 'installation_id required' });
-    }
-    
-    if (!req.file) {
-      return res.status(400).json({ success: false, error: 'No file uploaded' });
-    }
-    
-    console.log('File details:', {
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size
-    });
-    
-    const installation = await ensureFreshToken(installation_id);
-    
-    // Create FormData for multipart upload
-    const formData = new FormData();
-    formData.append('file', req.file.buffer, {
-      filename: req.file.originalname,
-      contentType: req.file.mimetype
-    });
-    formData.append('locationId', installation.locationId);
-    
-    console.log(`[UPLOAD] Uploading ${req.file.originalname} (${req.file.size} bytes) to GoHighLevel...`);
-    
-    const response = await makeGHLAPICall(installation_id, {
-      method: 'POST',
-      url: 'https://services.leadconnectorhq.com/medias/upload-file',
-      data: formData,
-      headers: {
-        ...formData.getHeaders(),
-        'Content-Type': `multipart/form-data; boundary=${formData.getBoundary()}`
-      }
-    });
-    
-    console.log('[UPLOAD] ✅ Upload successful:', response.data);
-    
-    res.json({
-      success: true,
-      media: response.data,
-      message: 'Image uploaded successfully to GoHighLevel media library'
-    });
-    
-  } catch (error) {
-    console.error('[UPLOAD] Error:', error.response?.data || error.message);
-    res.status(500).json({
-      success: false,
-      error: error.response?.data || error.message,
-      message: 'Failed to upload image to GoHighLevel'
-    });
-  }
-});
-
-// GET MEDIA FILES
-app.get('/api/images/list', async (req, res) => {
-  try {
-    const { installation_id, limit = 20, offset = 0 } = req.query;
-    
-    if (!installation_id) {
-      return res.status(400).json({ success: false, error: 'installation_id required' });
-    }
-    
-    const installation = await ensureFreshToken(installation_id);
-    
-    const response = await makeGHLAPICall(installation_id, {
-      method: 'GET',
-      url: `https://services.leadconnectorhq.com/medias/?locationId=${installation.locationId}&limit=${limit}&offset=${offset}`
-    });
-    
-    res.json({
-      success: true,
-      media: response.data,
-      message: 'Media files retrieved successfully'
-    });
-    
-  } catch (error) {
-    console.error('[MEDIA LIST] Error:', error.response?.data || error.message);
-    res.status(500).json({
-      success: false,
-      error: error.response?.data || error.message,
-      message: 'Failed to retrieve media files'
-    });
-  }
-});
-
-// HEALTH CHECK
-app.get('/', (req, res) => {
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>GoHighLevel OAuth Backend</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-        .header { text-align: center; margin-bottom: 40px; }
-        .status { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 8px; margin: 20px 0; }
-        .feature { display: inline-block; background: #e7f3ff; padding: 8px 16px; margin: 5px; border-radius: 20px; }
-        .endpoint { background: #f8f9fa; padding: 10px; margin: 10px 0; border-left: 4px solid #007bff; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>🔗 GoHighLevel OAuth Backend</h1>
-        <p>Version 5.9.0-image-upload | Status: Operational</p>
-    </div>
-    
-    <div class="status">
-        <h3>System Status</h3>
-        <p><strong>Installations:</strong> ${installations.size}</p>
-        <p><strong>Authenticated:</strong> ${Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length}</p>
-        <p><strong>Frontend:</strong> <a href="https://listings.engageautomations.com">listings.engageautomations.com</a></p>
-        <p><strong>Last Updated:</strong> ${new Date().toISOString()}</p>
-    </div>
-    
-    <h3>🚀 Features</h3>
-    <div class="feature">OAuth Processing</div>
-    <div class="feature">Frontend Redirect</div>
-    <div class="feature">Image Upload</div>
-    <div class="feature">Auto-Retry System</div>
-    
-    <h3>📡 API Endpoints</h3>
-    <div class="endpoint"><strong>POST</strong> /api/images/upload - Upload images to media library (multipart/form-data)</div>
-    <div class="endpoint"><strong>GET</strong> /api/images/list - List media files with pagination</div>
-    <div class="endpoint"><strong>POST</strong> /api/products/create - Create products with auto-retry</div>
-    <div class="endpoint"><strong>GET</strong> /installations - View installations</div>
-</body>
-</html>
-`;
-  
-  res.send(html);
-});
-
-// INSTALLATIONS ENDPOINT
-app.get('/installations', (req, res) => {
-  const installationsArray = Array.from(installations.values()).map(inst => ({
-    id: inst.id,
-    locationId: inst.locationId,
-    tokenStatus: inst.tokenStatus,
-    createdAt: inst.createdAt,
-    expiresAt: inst.expiresAt,
-    timeUntilExpiry: Math.max(0, Math.round((inst.expiresAt - Date.now()) / 1000))
-  }));
-  
-  res.json({
-    installations: installationsArray,
-    count: installationsArray.length,
-    frontend: 'https://listings.engageautomations.com'
-  });
-});
-
-// PRODUCT CREATION WITH AUTO-RETRY
+// BASIC PRODUCT CREATION (for OAuth backend compatibility)
 app.post('/api/products/create', async (req, res) => {
   try {
     const { name, description, productType, sku, currency, installation_id } = req.body;
@@ -345,17 +143,19 @@ app.post('/api/products/create', async (req, res) => {
       ...(currency && { currency })
     };
     
-    const response = await makeGHLAPICall(installation_id, {
-      method: 'POST',
-      url: 'https://services.leadconnectorhq.com/products/',
-      data: productData,
-      headers: { 'Content-Type': 'application/json' }
+    const response = await axios.post('https://services.leadconnectorhq.com/products/', productData, {
+      headers: {
+        'Authorization': `Bearer ${installation.accessToken}`,
+        'Version': '2021-07-28',
+        'Content-Type': 'application/json'
+      },
+      timeout: 15000
     });
     
     res.json({
       success: true,
       product: response.data.product || response.data,
-      message: 'Product created successfully with auto-retry protection'
+      message: 'Product created via OAuth backend (use API backend for advanced features)'
     });
     
   } catch (error) {
@@ -363,14 +163,85 @@ app.post('/api/products/create', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.response?.data || error.message,
-      message: 'Failed to create product after retries'
+      message: 'Failed to create product'
     });
   }
 });
 
+// HEALTH CHECK
+app.get('/', (req, res) => {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GoHighLevel OAuth Backend</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 40px; }
+        .status { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 8px; margin: 20px 0; }
+        .feature { display: inline-block; background: #e7f3ff; padding: 8px 16px; margin: 5px; border-radius: 20px; }
+        .endpoint { background: #f8f9fa; padding: 10px; margin: 10px 0; border-left: 4px solid #007bff; }
+        .note { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 8px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔗 GoHighLevel OAuth Backend</h1>
+        <p>Version 5.8.0-frontend-redirect | Status: Operational</p>
+    </div>
+    
+    <div class="note">
+        <h3>📋 OAuth Backend Purpose</h3>
+        <p>This backend handles OAuth authentication only. For API features like image upload, media management, and advanced product creation, use the separate API backend.</p>
+    </div>
+    
+    <div class="status">
+        <h3>System Status</h3>
+        <p><strong>Installations:</strong> ${installations.size}</p>
+        <p><strong>Authenticated:</strong> ${Array.from(installations.values()).filter(inst => inst.tokenStatus === 'valid').length}</p>
+        <p><strong>Frontend:</strong> <a href="https://listings.engageautomations.com">listings.engageautomations.com</a></p>
+        <p><strong>Last Updated:</strong> ${new Date().toISOString()}</p>
+    </div>
+    
+    <h3>🚀 Features</h3>
+    <div class="feature">OAuth Processing</div>
+    <div class="feature">Frontend Redirect</div>
+    <div class="feature">Token Management</div>
+    
+    <h3>📡 OAuth Endpoints</h3>
+    <div class="endpoint"><strong>GET/POST</strong> /oauth/callback - OAuth processing with frontend redirect</div>
+    <div class="endpoint"><strong>POST</strong> /api/products/create - Basic product creation (for compatibility)</div>
+    <div class="endpoint"><strong>GET</strong> /installations - View OAuth installations</div>
+    
+    <p><strong>Note:</strong> For advanced API features, use the dedicated API backend server.</p>
+</body>
+</html>
+`;
+  
+  res.send(html);
+});
+
+// INSTALLATIONS ENDPOINT
+app.get('/installations', (req, res) => {
+  const installationsArray = Array.from(installations.values()).map(inst => ({
+    id: inst.id,
+    locationId: inst.locationId,
+    tokenStatus: inst.tokenStatus,
+    createdAt: inst.createdAt,
+    expiresAt: inst.expiresAt,
+    timeUntilExpiry: Math.max(0, Math.round((inst.expiresAt - Date.now()) / 1000))
+  }));
+  
+  res.json({
+    installations: installationsArray,
+    count: installationsArray.length,
+    frontend: 'https://listings.engageautomations.com',
+    note: 'OAuth backend - use separate API backend for advanced features'
+  });
+});
+
 app.listen(port, () => {
-  console.log(`✅ OAuth Backend v5.9.0-image-upload running on port ${port}`);
-  console.log(`🔗 OAuth processing with frontend redirect`);
-  console.log(`📷 Image upload API with multipart form support`);
-  console.log(`🔄 Auto-retry system with 3 attempts`);
+  console.log(`✅ OAuth Backend v5.8.0-frontend-redirect running on port ${port}`);
+  console.log(`🔗 OAuth processing with frontend redirect to listings.engageautomations.com`);
+  console.log(`📋 OAuth-only backend - API features handled by separate API server`);
 });
