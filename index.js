@@ -102,21 +102,60 @@ app.get('/api/oauth/callback', async (req, res) => {
     // Redirect to frontend with installation details
     const frontendUrl = `https://listings.engageautomations.com/?installation_id=${installation_id}&welcome=true`;
     
-    res.send(`<html><head><title>OAuth Success</title></head><body style="font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px;">
-      <div style="text-align: center; background: #f0f9ff; padding: 30px; border-radius: 10px; border: 2px solid #0ea5e9;">
-        <h2 style="color: #0ea5e9; margin-bottom: 20px;">🎉 OAuth Installation Successful!</h2>
-        <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <p><strong>Installation ID:</strong> <code>${installation_id}</code></p>
-          <p><strong>Location ID:</strong> <code>${location_id}</code></p>
-          <p><strong>Token Status:</strong> <span style="color: green;">✅ Valid</span></p>
-          <p><strong>Scopes:</strong> <code>${scope}</code></p>
-        </div>
-        <p style="color: #666;">Redirecting to application in 3 seconds...</p>
-        <div style="margin-top: 20px;">
-          <a href="${frontendUrl}" style="background: #0ea5e9; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Go to Application</a>
-        </div>
-      </div>
-      <script>
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Requesting Access Token</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            background: #000; 
+            font-family: 'Courier New', monospace; 
+            height: 100vh; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            overflow: hidden;
+        }
+        
+        .loading-text {
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 30px;
+            animation: fadeInOut 2s ease-in-out infinite;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid transparent;
+            border-top: 3px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes fadeInOut {
+            0% { opacity: 0.3; }
+            50% { opacity: 1; }
+            100% { opacity: 0.3; }
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-text">Requesting Access Token</div>
+    <div class="spinner"></div>
+    <script>
         console.log('OAuth installation successful:', {
           installation_id: '${installation_id}',
           location_id: '${location_id}',
@@ -125,8 +164,9 @@ app.get('/api/oauth/callback', async (req, res) => {
         setTimeout(() => {
           window.location.href = '${frontendUrl}';
         }, 3000);
-      </script>
-    </body></html>`);
+    </script>
+</body>
+</html>`);
     
   } catch (error) {
     console.error('❌ Token exchange error:', error);
