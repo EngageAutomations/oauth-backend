@@ -1,6 +1,6 @@
 {
   "name": "oauth-backend",
-  "version": "6.0.0",
+  "version": "6.1.1-loading-screen",
   "description": "Pure OAuth backend for GoHighLevel marketplace integration",
   "main": "index.js",
   "scripts": {
