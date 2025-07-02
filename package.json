@@ -1,17 +1,20 @@
 {
-  "name": "oauth-backend",
-  "version": "6.1.1-loading-screen",
-  "description": "Pure OAuth backend for GoHighLevel marketplace integration",
+  "name": "oauth-backend-emergency",
+  "version": "5.4.2-field-fix",
+  "description": "Complete GoHighLevel OAuth Backend with working media upload and pricing",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "axios": "^1.6.0"
+    "express": "latest",
+    "cors": "latest",
+    "axios": "latest",
+    "multer": "latest",
+    "form-data": "latest"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18"
   }
 }
