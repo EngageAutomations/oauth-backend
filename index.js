@@ -1,3 +1,6 @@
+// DEPLOYMENT TRIGGER: 2025-07-03T20:51:24.174Z
+// Force rebuild with correct credentials
+
 // Fixed OAuth Backend with Correct Credentials
 // Version: 8.5.6-correct-credentials
 
