@@ -1,5 +1,5 @@
-// OAuth Backend v8.2.0-working-location - API-Based Location Discovery
-// Tests actual API access to find working location ID
+// OAuth Backend v8.3.0-smart-discovery - Smart Location Discovery
+// Try to find actual installed location, fallback to known working locations
 
 const express = require('express');
 const cors = require('cors');
@@ -29,16 +29,16 @@ const oauthCredentials = {
   redirect_uri: 'https://dir.engageautomations.com/api/oauth/callback'
 };
 
-// Known working locations to test
+// Known working locations as fallback
 const knownWorkingLocations = [
   'WAvk87RmW9rBSDJHeOpH', // MakerExpress 3D - confirmed working
   'kQDg6qp2x7GXYJ1VCkI8', // Engage Automations
   'eYeyzEWiaxcTOPROAo4C'  // Darul Uloom Tampa
 ];
 
-console.log('🚀 OAuth Backend v8.2.0-working-location Starting');
-console.log('✅ Working Location Discovery: Test actual API access');
-console.log('✅ Ignore JWT location - use proven working locations');
+console.log('🚀 OAuth Backend v8.3.0-smart-discovery Starting');
+console.log('✅ Smart Location Discovery: Find actual location first');
+console.log('✅ Fallback to known working locations if needed');
 
 // Enhanced token refresh
 async function enhancedRefreshAccessToken(id) {
@@ -116,13 +116,137 @@ async function exchangeCode(code, redirectUri) {
   return response.data;
 }
 
-// Working location discovery via API testing
-async function findWorkingLocation(accessToken) {
-  console.log('🔍 Finding working location via API testing');
+// JWT token decoder
+function decodeJWTPayload(token) {
+  try {
+    const base64Payload = token.split('.')[1];
+    const payload = Buffer.from(base64Payload, 'base64').toString('utf-8');
+    return JSON.parse(payload);
+  } catch (error) {
+    console.error('Failed to decode JWT:', error);
+    return null;
+  }
+}
+
+// Smart location discovery
+async function discoverActualLocation(accessToken) {
+  console.log('🧠 Smart Location Discovery - Finding actual installed location');
+  
+  // Step 1: Try to get JWT location and test it first
+  const decoded = decodeJWTPayload(accessToken);
+  let jwtLocationId = null;
+  
+  if (decoded) {
+    if (decoded.authClass === 'Location') {
+      jwtLocationId = decoded.authClassId;
+    } else if (decoded.authClass === 'Company') {
+      jwtLocationId = decoded.primaryAuthClassId;
+    }
+    
+    if (jwtLocationId) {
+      console.log(`Testing JWT location: ${jwtLocationId}`);
+      
+      try {
+        const response = await fetch(`https://services.leadconnectorhq.com/products/?locationId=${jwtLocationId}`, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Version': '2021-07-28',
+            'Accept': 'application/json'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const productCount = data.products ? data.products.length : 0;
+          
+          console.log(`✅ JWT location WORKS! ${jwtLocationId} (${productCount} products)`);
+          
+          return {
+            locationId: jwtLocationId,
+            productCount: productCount,
+            status: 'working',
+            method: 'jwt_location_works',
+            source: 'actual_install'
+          };
+        } else {
+          console.log(`❌ JWT location failed: ${response.status}`);
+        }
+      } catch (error) {
+        console.log(`❌ JWT location error: ${error.message}`);
+      }
+    }
+  }
+  
+  // Step 2: Try locations discovery API
+  console.log('Trying locations discovery APIs...');
+  
+  const locationEndpoints = [
+    'https://services.leadconnectorhq.com/locations/',
+    'https://rest.gohighlevel.com/v1/locations/'
+  ];
+  
+  for (const endpoint of locationEndpoints) {
+    try {
+      console.log(`Testing endpoint: ${endpoint}`);
+      
+      const response = await fetch(endpoint, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Version': '2021-07-28',
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('✅ Found locations data:', JSON.stringify(data, null, 2));
+        
+        if (data.locations && Array.isArray(data.locations) && data.locations.length > 0) {
+          // Test each discovered location
+          for (const location of data.locations) {
+            console.log(`Testing discovered location: ${location.id}`);
+            
+            try {
+              const testResponse = await fetch(`https://services.leadconnectorhq.com/products/?locationId=${location.id}`, {
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`,
+                  'Version': '2021-07-28',
+                  'Accept': 'application/json'
+                }
+              });
+              
+              if (testResponse.ok) {
+                const testData = await testResponse.json();
+                const productCount = testData.products ? testData.products.length : 0;
+                
+                console.log(`✅ Discovered location WORKS! ${location.id} (${productCount} products)`);
+                
+                return {
+                  locationId: location.id,
+                  locationName: location.name || 'Discovered Location',
+                  productCount: productCount,
+                  status: 'working',
+                  method: 'api_discovery',
+                  source: 'discovered_location'
+                };
+              }
+            } catch (testError) {
+              console.log(`❌ Location ${location.id} test failed`);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.log(`❌ Endpoint ${endpoint} failed`);
+    }
+  }
+  
+  // Step 3: Fallback to known working locations
+  console.log('Falling back to known working locations...');
   
   for (const locationId of knownWorkingLocations) {
     try {
-      console.log(`Testing location: ${locationId}`);
+      console.log(`Testing fallback location: ${locationId}`);
       
       const response = await fetch(`https://services.leadconnectorhq.com/products/?locationId=${locationId}`, {
         headers: {
@@ -136,20 +260,18 @@ async function findWorkingLocation(accessToken) {
         const data = await response.json();
         const productCount = data.products ? data.products.length : 0;
         
-        console.log(`✅ Found working location: ${locationId} (${productCount} products)`);
+        console.log(`✅ Fallback location works: ${locationId} (${productCount} products)`);
         
         return {
           locationId: locationId,
           productCount: productCount,
           status: 'working',
-          method: 'api_test_discovery'
+          method: 'fallback_known_location',
+          source: 'known_working'
         };
-      } else {
-        console.log(`❌ Location ${locationId} failed: ${response.status}`);
       }
-      
     } catch (error) {
-      console.log(`❌ Location ${locationId} error: ${error.message}`);
+      console.log(`❌ Fallback location ${locationId} failed`);
     }
   }
   
@@ -157,18 +279,18 @@ async function findWorkingLocation(accessToken) {
   return {
     locationId: 'none_found',
     status: 'no_access',
-    method: 'api_test_discovery'
+    method: 'all_methods_failed'
   };
 }
 
-// Store installation with working location discovery
+// Store installation with smart location discovery
 async function storeInstall(tokenData) {
   const id = `install_${Date.now()}`;
   
   console.log(`📦 Storing installation ${id}`);
   
-  // Find working location via API testing
-  const locationResult = await findWorkingLocation(tokenData.access_token);
+  // Smart location discovery
+  const locationResult = await discoverActualLocation(tokenData.access_token);
   
   const installation = {
     id,
@@ -177,10 +299,11 @@ async function storeInstall(tokenData) {
     expiresIn: tokenData.expires_in,
     expiresAt: Date.now() + tokenData.expires_in * 1000,
     locationId: locationResult.locationId,
-    locationName: locationResult.method,
+    locationName: locationResult.locationName || locationResult.method,
     locationStatus: locationResult.status,
+    discoveryMethod: locationResult.method,
+    discoverySource: locationResult.source,
     productCount: locationResult.productCount || 0,
-    discoveryMethod: 'api_testing',
     scopes: tokenData.scope ? tokenData.scope.split(' ') : [],
     tokenStatus: 'valid',
     createdAt: new Date().toISOString()
@@ -188,7 +311,7 @@ async function storeInstall(tokenData) {
   
   installations.set(id, installation);
   
-  console.log(`✅ Installation stored with working location: ${locationResult.locationId}`);
+  console.log(`✅ Installation stored with location: ${locationResult.locationId} (via ${locationResult.method})`);
   
   return id;
 }
@@ -196,28 +319,32 @@ async function storeInstall(tokenData) {
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
-    status: 'OAuth Backend v8.2.0-working-location',
-    message: 'API-based location discovery - finds working locations',
+    status: 'OAuth Backend v8.3.0-smart-discovery',
+    message: 'Smart location discovery - finds actual installed location',
     timestamp: new Date().toISOString(),
     approach: {
-      description: 'Test actual API access to find working location ID',
-      method: 'Ignore JWT location - use proven working locations',
-      knownLocations: knownWorkingLocations,
-      discovery: 'Real API testing for each known location'
+      description: 'Smart multi-step location discovery',
+      steps: [
+        '1. Test JWT location first (might work for new installs)',
+        '2. Try locations discovery APIs',
+        '3. Fallback to known working locations',
+        '4. Use first working location found'
+      ],
+      fallbackLocations: knownWorkingLocations
     },
     features: [
-      'WORKING LOCATION discovery via API testing',
-      'Ignore fake JWT location IDs',
-      'Test known working locations',
+      'SMART location discovery (actual install first)',
+      'JWT location testing (for new installs)',
+      'API-based location discovery',
+      'Fallback to known working locations',
       'Real API access validation',
-      'Correct OAuth credentials',
       'Enhanced bridge communication',
       'Token health monitoring'
     ]
   });
 });
 
-// OAuth callback with working location discovery
+// OAuth callback with smart location discovery
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   console.log('=== OAUTH CALLBACK RECEIVED ===');
   console.log('Query params:', req.query);
@@ -251,7 +378,7 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
     const tokenData = await exchangeCode(code, redirectUri);
     console.log('✅ Token exchange successful');
     
-    console.log('🔍 Finding working location via API testing...');
+    console.log('🧠 Starting smart location discovery...');
     const installationId = await storeInstall(tokenData);
     console.log(`✅ Installation stored with ID: ${installationId}`);
     
@@ -298,6 +425,7 @@ app.get('/api/token-access/:id', async (req, res) => {
     location_name: inst.locationName,
     location_status: inst.locationStatus,
     discovery_method: inst.discoveryMethod,
+    discovery_source: inst.discoverySource,
     product_count: inst.productCount,
     status: inst.tokenStatus,
     expires_at: inst.expiresAt,
@@ -325,6 +453,7 @@ app.get('/api/installation-status/:id', (req, res) => {
       locationName: inst.locationName,
       locationStatus: inst.locationStatus,
       discoveryMethod: inst.discoveryMethod,
+      discoverySource: inst.discoverySource,
       productCount: inst.productCount,
       tokenStatus: inst.tokenStatus,
       createdAt: inst.createdAt,
@@ -364,6 +493,7 @@ app.get('/api/token-health/:id', (req, res) => {
       name: inst.locationName,
       status: inst.locationStatus,
       discoveryMethod: inst.discoveryMethod,
+      discoverySource: inst.discoverySource,
       productCount: inst.productCount
     }
   });
@@ -424,6 +554,8 @@ app.get('/api/bridge/installation/:id', (req, res) => {
       active: inst.tokenStatus === 'valid',
       location_id: inst.locationId,
       location_name: inst.locationName,
+      discovery_method: inst.discoveryMethod,
+      discovery_source: inst.discoverySource,
       product_count: inst.productCount,
       expires_at: inst.expiresAt
     }
@@ -438,6 +570,7 @@ app.get('/installations', (req, res) => {
     locationName: inst.locationName,
     locationStatus: inst.locationStatus,
     discoveryMethod: inst.discoveryMethod,
+    discoverySource: inst.discoverySource,
     productCount: inst.productCount,
     tokenStatus: inst.tokenStatus,
     createdAt: inst.createdAt
@@ -456,6 +589,8 @@ app.get('/api/oauth/status', (req, res) => {
     authenticated: true, 
     tokenStatus: inst.tokenStatus, 
     locationId: inst.locationId,
+    discoveryMethod: inst.discoveryMethod,
+    discoverySource: inst.discoverySource,
     productCount: inst.productCount
   });
 });
@@ -471,11 +606,12 @@ app.get('/health', (req, res) => {
 
 // Start server
 app.listen(port, () => {
-  console.log(`✅ OAuth Backend v8.2.0-working-location running on port ${port}`);
+  console.log(`✅ OAuth Backend v8.3.0-smart-discovery running on port ${port}`);
   console.log(`✅ OAuth callback: https://dir.engageautomations.com/api/oauth/callback`);
-  console.log(`✅ Working Location Discovery:`);
-  console.log(`   → Test known working locations: [${knownWorkingLocations.join(', ')}]`);
-  console.log(`   → Use location with successful API access`);
-  console.log(`   → Ignore fake JWT location IDs`);
+  console.log(`✅ Smart Location Discovery:`);
+  console.log(`   1. Test JWT location first (for new installs)`);
+  console.log(`   2. Try API location discovery`);
+  console.log(`   3. Fallback to known working locations`);
+  console.log(`   4. Use first working location found`);
   console.log(`✅ Bridge endpoints active for API backend communication`);
 });
