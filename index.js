@@ -1,8 +1,5 @@
-// DEPLOYMENT TRIGGER: 2025-07-03T20:51:24.174Z
-// Force rebuild with correct credentials
-
-// Fixed OAuth Backend with Correct Credentials
-// Version: 8.5.6-correct-credentials
+// OAuth Backend with Location-Level Authentication
+// Version: 8.5.7-location-auth
 
 const express = require('express');
 const cors = require('cors');
@@ -39,7 +36,7 @@ app.use((error, req, res, next) => {
 // In-memory installations store
 const installations = new Map();
 
-// CORRECT OAuth configuration from Client Key file
+// OAuth configuration with correct credentials
 const OAUTH_CONFIG = {
   clientId: '68474924a586bce22a6e64f7-mbpkmyu4',
   clientSecret: 'b5a7a120-7df7-4d23-8796-4863cbd08f94',
@@ -55,12 +52,12 @@ app.get('/', (req, res) => {
     const authenticatedCount = Array.from(installations.values()).filter(inst => inst.active).length;
     res.json({
       service: "GoHighLevel OAuth Backend",
-      version: "8.5.6-correct-credentials",
+      version: "8.5.7-location-auth",
       installs: installations.size,
       authenticated: authenticatedCount,
       status: "operational",
-      features: ["oauth-standard", "token-refresh", "media-upload", "correct-credentials"],
-      debug: "using correct client credentials from Client Key file",
+      features: ["oauth-location", "token-refresh", "media-upload", "location-auth-class"],
+      debug: "using location-level authentication for media upload access",
       timestamp: new Date().toISOString(),
       uptime: process.uptime()
     });
@@ -88,6 +85,7 @@ app.get('/installations', (req, res) => {
       active: inst.active,
       created_at: inst.created_at,
       token_status: inst.token_status || 'valid',
+      auth_class: inst.auth_class || 'unknown',
       scopes: inst.scopes || 'full'
     }));
     
@@ -101,11 +99,11 @@ app.get('/installations', (req, res) => {
   }
 });
 
-// OAuth callback with correct credentials
+// OAuth callback with LOCATION-LEVEL authentication
 app.get('/api/oauth/callback', async (req, res) => {
   console.log('=== OAUTH CALLBACK START ===');
   console.log('Query params:', req.query);
-  console.log('Using CORRECT client credentials from Client Key file');
+  console.log('Using LOCATION-LEVEL authentication for media upload access');
   
   try {
     const { code, error } = req.query;
@@ -127,20 +125,22 @@ app.get('/api/oauth/callback', async (req, res) => {
       });
     }
     
-    console.log('Starting token exchange with CORRECT credentials...');
+    console.log('Starting token exchange with LOCATION-LEVEL authentication...');
     
-    // Standard token exchange with CORRECT credentials
+    // LOCATION-LEVEL token exchange - THIS IS THE KEY FIX
     const tokenData = new URLSearchParams({
       client_id: OAUTH_CONFIG.clientId,
       client_secret: OAUTH_CONFIG.clientSecret,
       grant_type: 'authorization_code',
       code: code,
-      redirect_uri: OAUTH_CONFIG.redirectUri
+      redirect_uri: OAUTH_CONFIG.redirectUri,
+      user_type: 'location'  // ✅ THIS ENABLES LOCATION-LEVEL AUTH
     });
     
-    console.log('Making token exchange request...');
+    console.log('Making LOCATION-LEVEL token exchange request...');
     console.log('Client ID:', OAUTH_CONFIG.clientId);
     console.log('Redirect URI:', OAUTH_CONFIG.redirectUri);
+    console.log('User Type: location (for media upload access)');
     console.log('Authorization code:', code.substring(0, 10) + '...');
     
     const response = await axios.post(OAUTH_CONFIG.tokenUrl, tokenData, {
@@ -163,13 +163,14 @@ app.get('/api/oauth/callback', async (req, res) => {
         status: response.status,
         credentials_used: {
           client_id: OAUTH_CONFIG.clientId,
-          redirect_uri: OAUTH_CONFIG.redirectUri
+          redirect_uri: OAUTH_CONFIG.redirectUri,
+          user_type: 'location'
         },
         timestamp: new Date().toISOString()
       });
     }
     
-    console.log('Token exchange successful with CORRECT credentials!');
+    console.log('LOCATION-LEVEL token exchange successful!');
     console.log('Token data:', {
       access_token: response.data.access_token ? 'received' : 'missing',
       refresh_token: response.data.refresh_token ? 'received' : 'missing',
@@ -178,7 +179,20 @@ app.get('/api/oauth/callback', async (req, res) => {
       scope: response.data.scope
     });
     
-    // Store installation
+    // Decode JWT to verify auth class
+    let authClass = 'unknown';
+    try {
+      if (response.data.access_token) {
+        const payload = JSON.parse(Buffer.from(response.data.access_token.split('.')[1], 'base64').toString());
+        authClass = payload.authClass || 'unknown';
+        console.log('JWT Auth Class:', authClass);
+        console.log('JWT Location ID:', payload.locationId || 'not found');
+      }
+    } catch (jwtError) {
+      console.error('JWT decode error:', jwtError.message);
+    }
+    
+    // Store installation with auth class info
     const installationId = `install_${Date.now()}`;
     const installation = {
       id: installationId,
@@ -191,6 +205,8 @@ app.get('/api/oauth/callback', async (req, res) => {
       active: true,
       created_at: new Date().toISOString(),
       token_status: 'valid',
+      auth_class: authClass,
+      user_type: 'location',
       client_id: OAUTH_CONFIG.clientId
     };
     
@@ -198,6 +214,7 @@ app.get('/api/oauth/callback', async (req, res) => {
     
     console.log(`Installation stored: ${installationId}`);
     console.log(`Location ID: ${installation.location_id}`);
+    console.log(`Auth Class: ${installation.auth_class}`);
     
     // Schedule token refresh
     try {
@@ -207,7 +224,7 @@ app.get('/api/oauth/callback', async (req, res) => {
     }
     
     // Redirect to frontend
-    const redirectUrl = `https://listings.engageautomations.com/?installation_id=${installationId}&location_id=${installation.location_id}&welcome=true`;
+    const redirectUrl = `https://listings.engageautomations.com/?installation_id=${installationId}&location_id=${installation.location_id}&auth_class=${authClass}&welcome=true`;
     console.log(`Redirecting to: ${redirectUrl}`);
     
     res.redirect(redirectUrl);
@@ -220,7 +237,8 @@ app.get('/api/oauth/callback', async (req, res) => {
       message: error.message,
       credentials_used: {
         client_id: OAUTH_CONFIG.clientId,
-        redirect_uri: OAUTH_CONFIG.redirectUri
+        redirect_uri: OAUTH_CONFIG.redirectUri,
+        user_type: 'location'
       },
       timestamp: new Date().toISOString()
     });
@@ -264,6 +282,8 @@ app.get('/api/token-access/:installationId', async (req, res) => {
       access_token: installation.access_token,
       location_id: installation.location_id,
       expires_in: Math.floor(timeUntilExpiry / 1000),
+      auth_class: installation.auth_class,
+      user_type: installation.user_type,
       client_id: installation.client_id,
       timestamp: new Date().toISOString()
     });
@@ -278,7 +298,7 @@ app.get('/api/token-access/:installationId', async (req, res) => {
   }
 });
 
-// Token refresh function with correct credentials
+// Token refresh function with location-level authentication
 async function refreshToken(installationId) {
   const installation = installations.get(installationId);
   if (!installation?.refresh_token) {
@@ -290,7 +310,8 @@ async function refreshToken(installationId) {
       client_id: OAUTH_CONFIG.clientId,
       client_secret: OAUTH_CONFIG.clientSecret,
       grant_type: 'refresh_token',
-      refresh_token: installation.refresh_token
+      refresh_token: installation.refresh_token,
+      user_type: 'location'  // ✅ MAINTAIN LOCATION-LEVEL AUTH ON REFRESH
     });
     
     const response = await axios.post(OAUTH_CONFIG.tokenUrl, refreshData, {
@@ -314,7 +335,17 @@ async function refreshToken(installationId) {
     installation.token_status = 'valid';
     installation.last_refresh = new Date().toISOString();
     
-    console.log(`Token refreshed successfully for ${installationId}`);
+    // Update auth class from refreshed token
+    try {
+      if (response.data.access_token) {
+        const payload = JSON.parse(Buffer.from(response.data.access_token.split('.')[1], 'base64').toString());
+        installation.auth_class = payload.authClass || installation.auth_class;
+      }
+    } catch (jwtError) {
+      console.error('JWT decode error on refresh:', jwtError.message);
+    }
+    
+    console.log(`Token refreshed successfully for ${installationId} (auth class: ${installation.auth_class})`);
     
     // Schedule next refresh
     scheduleTokenRefresh(installationId);
@@ -353,9 +384,10 @@ function scheduleTokenRefresh(installationId) {
 // Start server
 const server = app.listen(port, () => {
   console.log(`OAuth Backend running on port ${port}`);
-  console.log('Version: 8.5.6-correct-credentials');
-  console.log('Features: Standard OAuth with CORRECT client credentials');
+  console.log('Version: 8.5.7-location-auth');
+  console.log('Features: LOCATION-LEVEL authentication for media upload access');
   console.log('Client ID:', OAUTH_CONFIG.clientId);
+  console.log('Auth Type: Location (enables media upload)');
 });
 
 server.on('error', (error) => {
