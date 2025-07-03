@@ -1,8 +1,5 @@
-// LOCATION AUTH DEPLOYMENT: 2025-07-03T21:41:48.887Z
-// Force rebuild with user_type: location for media upload
-
-// OAuth Backend with Location-Level Authentication
-// Version: 8.5.7-location-auth
+// OAuth Backend with Case-Sensitive Location Authentication
+// Version: 8.5.8-location-case-fix
 
 const express = require('express');
 const cors = require('cors');
@@ -55,12 +52,12 @@ app.get('/', (req, res) => {
     const authenticatedCount = Array.from(installations.values()).filter(inst => inst.active).length;
     res.json({
       service: "GoHighLevel OAuth Backend",
-      version: "8.5.7-location-auth",
+      version: "8.5.8-location-case-fix",
       installs: installations.size,
       authenticated: authenticatedCount,
       status: "operational",
-      features: ["oauth-location", "token-refresh", "media-upload", "location-auth-class"],
-      debug: "using location-level authentication for media upload access",
+      features: ["oauth-location", "token-refresh", "media-upload", "case-sensitive-location"],
+      debug: "using case-sensitive Location authentication for media upload access",
       timestamp: new Date().toISOString(),
       uptime: process.uptime()
     });
@@ -102,11 +99,11 @@ app.get('/installations', (req, res) => {
   }
 });
 
-// OAuth callback with LOCATION-LEVEL authentication
+// OAuth callback with CASE-SENSITIVE Location authentication
 app.get('/api/oauth/callback', async (req, res) => {
   console.log('=== OAUTH CALLBACK START ===');
   console.log('Query params:', req.query);
-  console.log('Using LOCATION-LEVEL authentication for media upload access');
+  console.log('Using CASE-SENSITIVE "Location" authentication for media upload access');
   
   try {
     const { code, error } = req.query;
@@ -128,22 +125,22 @@ app.get('/api/oauth/callback', async (req, res) => {
       });
     }
     
-    console.log('Starting token exchange with LOCATION-LEVEL authentication...');
+    console.log('Starting token exchange with CASE-SENSITIVE "Location" authentication...');
     
-    // LOCATION-LEVEL token exchange - THIS IS THE KEY FIX
+    // CASE-SENSITIVE Location token exchange - FIXED with capital "L"
     const tokenData = new URLSearchParams({
       client_id: OAUTH_CONFIG.clientId,
       client_secret: OAUTH_CONFIG.clientSecret,
       grant_type: 'authorization_code',
       code: code,
       redirect_uri: OAUTH_CONFIG.redirectUri,
-      user_type: 'location'  // ✅ THIS ENABLES LOCATION-LEVEL AUTH
+      user_type: 'Location'  // ✅ CAPITAL "L" - THIS IS THE KEY FIX
     });
     
-    console.log('Making LOCATION-LEVEL token exchange request...');
+    console.log('Making LOCATION token exchange request...');
     console.log('Client ID:', OAUTH_CONFIG.clientId);
     console.log('Redirect URI:', OAUTH_CONFIG.redirectUri);
-    console.log('User Type: location (for media upload access)');
+    console.log('User Type: "Location" (case-sensitive for media upload access)');
     console.log('Authorization code:', code.substring(0, 10) + '...');
     
     const response = await axios.post(OAUTH_CONFIG.tokenUrl, tokenData, {
@@ -167,13 +164,13 @@ app.get('/api/oauth/callback', async (req, res) => {
         credentials_used: {
           client_id: OAUTH_CONFIG.clientId,
           redirect_uri: OAUTH_CONFIG.redirectUri,
-          user_type: 'location'
+          user_type: 'Location'
         },
         timestamp: new Date().toISOString()
       });
     }
     
-    console.log('LOCATION-LEVEL token exchange successful!');
+    console.log('LOCATION token exchange successful with correct case!');
     console.log('Token data:', {
       access_token: response.data.access_token ? 'received' : 'missing',
       refresh_token: response.data.refresh_token ? 'received' : 'missing',
@@ -182,14 +179,22 @@ app.get('/api/oauth/callback', async (req, res) => {
       scope: response.data.scope
     });
     
-    // Decode JWT to verify auth class
+    // Decode JWT to verify Location auth class
     let authClass = 'unknown';
+    let jwtLocationId = 'unknown';
     try {
       if (response.data.access_token) {
         const payload = JSON.parse(Buffer.from(response.data.access_token.split('.')[1], 'base64').toString());
         authClass = payload.authClass || 'unknown';
+        jwtLocationId = payload.locationId || 'not found';
         console.log('JWT Auth Class:', authClass);
-        console.log('JWT Location ID:', payload.locationId || 'not found');
+        console.log('JWT Location ID:', jwtLocationId);
+        
+        if (authClass === 'Location') {
+          console.log('✅ SUCCESS: Location-level authentication achieved!');
+        } else {
+          console.log('⚠️ WARNING: Auth class is not Location:', authClass);
+        }
       }
     } catch (jwtError) {
       console.error('JWT decode error:', jwtError.message);
@@ -203,13 +208,13 @@ app.get('/api/oauth/callback', async (req, res) => {
       refresh_token: response.data.refresh_token,
       expires_in: response.data.expires_in,
       expires_at: Date.now() + (response.data.expires_in * 1000),
-      location_id: response.data.locationId || 'WAvk87RmW9rBSDJHeOpH',
+      location_id: response.data.locationId || jwtLocationId,
       scopes: response.data.scope || OAUTH_CONFIG.scope,
       active: true,
       created_at: new Date().toISOString(),
       token_status: 'valid',
       auth_class: authClass,
-      user_type: 'location',
+      user_type: 'Location',
       client_id: OAUTH_CONFIG.clientId
     };
     
@@ -241,7 +246,7 @@ app.get('/api/oauth/callback', async (req, res) => {
       credentials_used: {
         client_id: OAUTH_CONFIG.clientId,
         redirect_uri: OAUTH_CONFIG.redirectUri,
-        user_type: 'location'
+        user_type: 'Location'
       },
       timestamp: new Date().toISOString()
     });
@@ -301,7 +306,7 @@ app.get('/api/token-access/:installationId', async (req, res) => {
   }
 });
 
-// Token refresh function with location-level authentication
+// Token refresh function with case-sensitive Location authentication
 async function refreshToken(installationId) {
   const installation = installations.get(installationId);
   if (!installation?.refresh_token) {
@@ -314,7 +319,7 @@ async function refreshToken(installationId) {
       client_secret: OAUTH_CONFIG.clientSecret,
       grant_type: 'refresh_token',
       refresh_token: installation.refresh_token,
-      user_type: 'location'  // ✅ MAINTAIN LOCATION-LEVEL AUTH ON REFRESH
+      user_type: 'Location'  // ✅ MAINTAIN CASE-SENSITIVE "Location" ON REFRESH
     });
     
     const response = await axios.post(OAUTH_CONFIG.tokenUrl, refreshData, {
@@ -387,10 +392,10 @@ function scheduleTokenRefresh(installationId) {
 // Start server
 const server = app.listen(port, () => {
   console.log(`OAuth Backend running on port ${port}`);
-  console.log('Version: 8.5.7-location-auth');
-  console.log('Features: LOCATION-LEVEL authentication for media upload access');
+  console.log('Version: 8.5.8-location-case-fix');
+  console.log('Features: CASE-SENSITIVE "Location" authentication for media upload access');
   console.log('Client ID:', OAUTH_CONFIG.clientId);
-  console.log('Auth Type: Location (enables media upload)');
+  console.log('Auth Type: "Location" (capital L) for media upload');
 });
 
 server.on('error', (error) => {
