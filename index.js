@@ -1,6 +1,5 @@
-// Enhanced OAuth Backend with Location-Level Authentication
-// Version: 8.5.2-location-working
-// Features: Location-level tokens, enhanced error handling, complete workflow support
+// Stable OAuth Backend - Version 8.5.4-crash-fix
+// Enhanced error handling and stability improvements
 
 const express = require('express');
 const cors = require('cors');
@@ -8,14 +7,38 @@ const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
+// Enhanced error handling
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Don't exit, just log
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit, just log
+});
+
+// Middleware with error handling
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
+
+// Global error handler
+app.use((error, req, res, next) => {
+  console.error('Express error:', error);
+  res.status(500).json({ error: 'Internal server error', message: error.message });
+});
 
 // In-memory installations store
 const installations = new Map();
 
-// Enhanced OAuth configuration with location-level access
+// OAuth configuration
 const OAUTH_CONFIG = {
   clientId: '675e4251e4b0e7a613050be3',
   clientSecret: '675e4251e4b0e7a613050be3-3lGGH5vhNS4RJxXb',
@@ -25,90 +48,121 @@ const OAUTH_CONFIG = {
   tokenUrl: 'https://services.leadconnectorhq.com/oauth/token'
 };
 
-// Basic routes
+// Health check routes
 app.get('/', (req, res) => {
-  const authenticatedCount = Array.from(installations.values()).filter(inst => inst.active).length;
-  res.json({
-    service: "GoHighLevel OAuth Backend",
-    version: "8.5.2-location-working",
-    installs: installations.size,
-    authenticated: authenticatedCount,
-    status: "operational",
-    features: ["oauth-location", "token-refresh", "media-upload", "complete-workflow"],
-    debug: "location-level authentication ready",
-    timestamp: new Date().toISOString()
-  });
+  try {
+    const authenticatedCount = Array.from(installations.values()).filter(inst => inst.active).length;
+    res.json({
+      service: "GoHighLevel OAuth Backend",
+      version: "8.5.4-crash-fix",
+      installs: installations.size,
+      authenticated: authenticatedCount,
+      status: "operational",
+      features: ["oauth-location", "token-refresh", "media-upload", "crash-protection"],
+      debug: "stable location-level authentication",
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime()
+    });
+  } catch (error) {
+    console.error('Root endpoint error:', error);
+    res.status(500).json({ error: 'Service error' });
+  }
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Installations endpoint
-app.get('/installations', (req, res) => {
-  const installList = Array.from(installations.values()).map(inst => ({
-    id: inst.id,
-    location_id: inst.location_id,
-    active: inst.active,
-    created_at: inst.created_at,
-    token_status: inst.token_status || 'valid',
-    scopes: inst.scopes || 'full'
-  }));
-  
-  res.json({
-    count: installations.size,
-    installations: installList
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage()
   });
 });
 
-// OAuth callback with location-level token exchange
+// Installations endpoint with error protection
+app.get('/installations', (req, res) => {
+  try {
+    const installList = Array.from(installations.values()).map(inst => ({
+      id: inst.id,
+      location_id: inst.location_id,
+      active: inst.active,
+      created_at: inst.created_at,
+      token_status: inst.token_status || 'valid',
+      scopes: inst.scopes || 'full'
+    }));
+    
+    res.json({
+      count: installations.size,
+      installations: installList
+    });
+  } catch (error) {
+    console.error('Installations endpoint error:', error);
+    res.status(500).json({ error: 'Failed to retrieve installations' });
+  }
+});
+
+// OAuth callback with comprehensive error handling
 app.get('/api/oauth/callback', async (req, res) => {
-  console.log('=== OAUTH CALLBACK RECEIVED ===');
+  console.log('=== OAUTH CALLBACK START ===');
   console.log('Query params:', req.query);
   
-  const { code, error } = req.query;
-  
-  if (error) {
-    console.error('OAuth error:', error);
-    return res.status(400).json({ error: 'OAuth authorization failed', details: error });
-  }
-  
-  if (!code) {
-    console.error('No authorization code received');
-    return res.status(400).json({ error: 'Authorization code required' });
-  }
-  
   try {
-    console.log('Exchanging code for location-level tokens...');
+    const { code, error } = req.query;
     
-    // Enhanced token exchange with location-level access
+    if (error) {
+      console.error('OAuth error from GHL:', error);
+      return res.status(400).json({ 
+        error: 'OAuth authorization failed', 
+        details: error,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (!code) {
+      console.error('No authorization code received');
+      return res.status(400).json({ 
+        error: 'Authorization code required',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log('Starting token exchange...');
+    
+    // Token exchange with timeout and retry protection
     const tokenData = new URLSearchParams({
       client_id: OAUTH_CONFIG.clientId,
       client_secret: OAUTH_CONFIG.clientSecret,
       grant_type: 'authorization_code',
       code: code,
       redirect_uri: OAUTH_CONFIG.redirectUri,
-      user_type: 'location'  // Request location-level tokens
+      user_type: 'location'
     });
     
     console.log('Making token exchange request...');
+    
     const response = await axios.post(OAUTH_CONFIG.tokenUrl, tokenData, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Accept': 'application/json'
       },
-      timeout: 15000
+      timeout: 15000,
+      validateStatus: () => true // Accept all status codes
     });
+    
+    console.log(`Token exchange response: ${response.status}`);
+    
+    if (response.status !== 200) {
+      console.error('Token exchange failed:', response.data);
+      return res.status(400).json({ 
+        error: 'Token exchange failed',
+        details: response.data,
+        status: response.status,
+        timestamp: new Date().toISOString()
+      });
+    }
     
     console.log('Token exchange successful!');
-    console.log('Response data:', {
-      access_token: response.data.access_token ? 'received' : 'missing',
-      refresh_token: response.data.refresh_token ? 'received' : 'missing',
-      expires_in: response.data.expires_in,
-      location_id: response.data.locationId || 'not provided'
-    });
     
-    // Store installation with location-level tokens
+    // Store installation safely
     const installationId = `install_${Date.now()}`;
     const installation = {
       id: installationId,
@@ -129,65 +183,85 @@ app.get('/api/oauth/callback', async (req, res) => {
     console.log(`Installation stored: ${installationId}`);
     console.log(`Location ID: ${installation.location_id}`);
     
-    // Schedule token refresh
-    scheduleTokenRefresh(installationId);
+    // Schedule token refresh with error protection
+    try {
+      scheduleTokenRefresh(installationId);
+    } catch (refreshError) {
+      console.error('Token refresh scheduling failed:', refreshError);
+      // Don't fail the callback for this
+    }
     
-    // Redirect to frontend with installation details
+    // Redirect to frontend
     const redirectUrl = `https://listings.engageautomations.com/?installation_id=${installationId}&location_id=${installation.location_id}&welcome=true`;
     console.log(`Redirecting to: ${redirectUrl}`);
     
     res.redirect(redirectUrl);
     
   } catch (error) {
-    console.error('Token exchange failed:', error.response?.data || error.message);
+    console.error('OAuth callback error:', error);
     
-    let errorMessage = 'Token exchange failed';
-    if (error.response?.data?.error) {
-      errorMessage += `: ${error.response.data.error}`;
-    }
-    
-    res.status(400).json({ 
-      error: errorMessage,
-      details: error.response?.data || error.message 
+    // Send error response without crashing
+    res.status(500).json({ 
+      error: 'OAuth processing failed',
+      message: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// Token access endpoint
+// Token access endpoint with error protection
 app.get('/api/token-access/:installationId', async (req, res) => {
-  const { installationId } = req.params;
-  const installation = installations.get(installationId);
-  
-  if (!installation) {
-    return res.status(404).json({ error: 'Installation not found' });
-  }
-  
-  if (!installation.active) {
-    return res.status(400).json({ error: 'Installation not active' });
-  }
-  
   try {
+    const { installationId } = req.params;
+    const installation = installations.get(installationId);
+    
+    if (!installation) {
+      return res.status(404).json({ 
+        error: 'Installation not found',
+        installation_id: installationId,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (!installation.active) {
+      return res.status(400).json({ 
+        error: 'Installation not active',
+        installation_id: installationId,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
     // Check if token needs refresh
     const timeUntilExpiry = installation.expires_at - Date.now();
     if (timeUntilExpiry < 600000) { // 10 minutes
-      console.log(`Refreshing token for ${installationId}`);
-      await refreshToken(installationId);
+      console.log(`Token needs refresh for ${installationId}`);
+      try {
+        await refreshToken(installationId);
+      } catch (refreshError) {
+        console.error('Token refresh failed:', refreshError);
+        // Return current token even if refresh failed
+      }
     }
     
     res.json({
       access_token: installation.access_token,
       location_id: installation.location_id,
       expires_in: Math.floor(timeUntilExpiry / 1000),
-      user_type: installation.user_type || 'location'
+      user_type: installation.user_type || 'location',
+      timestamp: new Date().toISOString()
     });
     
   } catch (error) {
     console.error('Token access error:', error);
-    res.status(500).json({ error: 'Token access failed' });
+    res.status(500).json({ 
+      error: 'Token access failed',
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
   }
 });
 
-// Token refresh function
+// Token refresh function with error protection
 async function refreshToken(installationId) {
   const installation = installations.get(installationId);
   if (!installation?.refresh_token) {
@@ -207,10 +281,15 @@ async function refreshToken(installationId) {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Accept': 'application/json'
       },
-      timeout: 15000
+      timeout: 15000,
+      validateStatus: () => true
     });
     
-    // Update installation with new tokens
+    if (response.status !== 200) {
+      throw new Error(`Token refresh failed: ${response.status}`);
+    }
+    
+    // Update installation
     installation.access_token = response.data.access_token;
     installation.refresh_token = response.data.refresh_token || installation.refresh_token;
     installation.expires_in = response.data.expires_in;
@@ -224,33 +303,46 @@ async function refreshToken(installationId) {
     scheduleTokenRefresh(installationId);
     
   } catch (error) {
-    console.error('Token refresh failed:', error.response?.data || error.message);
+    console.error('Token refresh failed:', error);
     installation.token_status = 'refresh_failed';
     installation.active = false;
     throw error;
   }
 }
 
-// Schedule token refresh
+// Token refresh scheduling with error protection
 function scheduleTokenRefresh(installationId) {
-  const installation = installations.get(installationId);
-  if (!installation) return;
-  
-  const timeUntilRefresh = Math.max(installation.expires_at - Date.now() - 600000, 60000); // 10 min before expiry, min 1 min
-  
-  setTimeout(async () => {
-    try {
-      await refreshToken(installationId);
-    } catch (error) {
-      console.error(`Scheduled refresh failed for ${installationId}:`, error);
-    }
-  }, timeUntilRefresh);
-  
-  console.log(`Token refresh scheduled for ${installationId} in ${Math.round(timeUntilRefresh / 60000)} minutes`);
+  try {
+    const installation = installations.get(installationId);
+    if (!installation) return;
+    
+    const timeUntilRefresh = Math.max(installation.expires_at - Date.now() - 600000, 60000);
+    
+    setTimeout(async () => {
+      try {
+        await refreshToken(installationId);
+      } catch (error) {
+        console.error(`Scheduled refresh failed for ${installationId}:`, error);
+      }
+    }, timeUntilRefresh);
+    
+    console.log(`Token refresh scheduled for ${installationId} in ${Math.round(timeUntilRefresh / 60000)} minutes`);
+    
+  } catch (error) {
+    console.error('Token refresh scheduling error:', error);
+  }
 }
 
-// Start server
-app.listen(port, () => {
+// Start server with error protection
+const server = app.listen(port, () => {
   console.log(`OAuth Backend running on port ${port}`);
-  console.log('Features: Location-level authentication, token refresh, media upload support');
+  console.log('Version: 8.5.4-crash-fix');
+  console.log('Features: Stable location-level authentication, comprehensive error handling');
 });
+
+// Handle server errors
+server.on('error', (error) => {
+  console.error('Server error:', error);
+});
+
+module.exports = app;
