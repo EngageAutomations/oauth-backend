@@ -1,3 +1,6 @@
+// CASE-SENSITIVE LOCATION FIX: 2025-07-03T22:46:30.261Z
+// user_type: "Location" (capital L) for enum validation
+
 // OAuth Backend with Case-Sensitive Location Authentication
 // Version: 8.5.8-location-case-fix
 
