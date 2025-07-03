@@ -1,5 +1,5 @@
-// OAuth Backend v7.0.1-callback-fix - Fixed OAuth callback handler
-// Removes incorrect installation_id requirement from callback
+// OAuth Backend v7.0.2-correct-credentials - WORKING OAuth Credentials
+// Uses the correct GoHighLevel OAuth credentials from client key file
 
 const express = require('express');
 const cors = require('cors');
@@ -23,15 +23,16 @@ app.use(express.json());
 // In-memory install store
 const installations = new Map();
 
-// OAuth credentials - these work perfectly
+// CORRECT OAuth credentials from client key file
 const oauthCredentials = {
-  client_id: '68474924a586bce22a6e64f7',
-  client_secret: '68474924a586bce22a6e64f7-mbpkmyu4',
+  client_id: '68474924a586bce22a6e64f7-mbpkmyu4',
+  client_secret: 'b5a7a120-7df7-4d23-8796-4863cbd08f94',
   redirect_uri: 'https://dir.engageautomations.com/api/oauth/callback'
 };
 
-console.log('🚀 OAuth Backend v7.0.1-callback-fix Starting');
-console.log('Features: Smart location detection, Enhanced bridge communication, Fixed callback');
+console.log('🚀 OAuth Backend v7.0.2-correct-credentials Starting');
+console.log('OAuth Client ID:', oauthCredentials.client_id);
+console.log('Features: Correct credentials, Smart location detection, Enhanced bridge communication');
 
 // Enhanced token refresh with proper error handling
 async function enhancedRefreshAccessToken(id) {
@@ -85,9 +86,10 @@ async function enhancedRefreshAccessToken(id) {
   }
 }
 
-// Token exchange function
+// Token exchange function with correct credentials
 async function exchangeCode(code, redirectUri) {
   console.log('🔄 Exchanging authorization code for tokens');
+  console.log('Using Client ID:', oauthCredentials.client_id);
   
   const body = new URLSearchParams();
   body.append('client_id', oauthCredentials.client_id);
@@ -233,10 +235,15 @@ function storeInstall(tokenData) {
 // Root endpoint with enhanced status
 app.get('/', (req, res) => {
   res.json({
-    status: 'OAuth Backend v7.0.1-callback-fix',
-    message: 'Enhanced OAuth with fixed callback handling',
+    status: 'OAuth Backend v7.0.2-correct-credentials',
+    message: 'OAuth with CORRECT GoHighLevel credentials',
     timestamp: new Date().toISOString(),
+    credentials: {
+      client_id: oauthCredentials.client_id,
+      redirect_uri: oauthCredentials.redirect_uri
+    },
     features: [
+      'CORRECT OAuth credentials from client key file',
       'Fixed OAuth callback (no installation_id required)',
       'Smart location detection',
       'Account location discovery',
@@ -246,7 +253,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// FIXED OAuth callback - no installation_id required
+// OAuth callback with correct credentials
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   console.log('=== OAUTH CALLBACK RECEIVED ===');
   console.log('Query params:', req.query);
@@ -276,7 +283,10 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
       : 'https://dir.engageautomations.com/oauth/callback';
 
     console.log('Exchanging code for tokens...');
-    console.log('Redirect URI:', redirectUri);
+    console.log('Using correct credentials:', {
+      client_id: oauthCredentials.client_id,
+      redirect_uri: redirectUri
+    });
     
     const tokenData = await exchangeCode(code, redirectUri);
     console.log('✅ Token exchange successful');
@@ -492,7 +502,10 @@ app.get('/health', (req, res) => {
 
 // Start server
 app.listen(port, () => {
-  console.log(`✅ OAuth Backend v7.0.1-callback-fix running on port ${port}`);
+  console.log(`✅ OAuth Backend v7.0.2-correct-credentials running on port ${port}`);
   console.log(`✅ OAuth callback: https://dir.engageautomations.com/api/oauth/callback`);
+  console.log(`✅ Using CORRECT OAuth credentials:`);
+  console.log(`   Client ID: ${oauthCredentials.client_id}`);
+  console.log(`   Redirect URI: ${oauthCredentials.redirect_uri}`);
   console.log(`✅ Bridge endpoints active for API backend communication`);
 });
