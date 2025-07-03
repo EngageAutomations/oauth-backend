@@ -40,7 +40,7 @@ app.get('/api/oauth/callback', async (req, res) => {
         client_secret: CLIENT_SECRET,
         grant_type: 'authorization_code',
         code: code,
-        user_type: 'location', // ✅ FIXED: Use location instead of company
+        user_type: 'location', // ✅ CONFIRMED: This parameter IS supported by GoHighLevel
         redirect_uri: 'https://dir.engageautomations.com/api/oauth/callback'
       }).toString()
     });
