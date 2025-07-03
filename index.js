@@ -1,5 +1,5 @@
-// Fixed OAuth Backend - Remove Invalid user_type Parameter
-// Version: 8.5.5-enum-fix
+// Fixed OAuth Backend with Correct Credentials
+// Version: 8.5.6-correct-credentials
 
 const express = require('express');
 const cors = require('cors');
@@ -36,10 +36,10 @@ app.use((error, req, res, next) => {
 // In-memory installations store
 const installations = new Map();
 
-// OAuth configuration - FIXED: No invalid user_type parameter
+// CORRECT OAuth configuration from Client Key file
 const OAUTH_CONFIG = {
-  clientId: '675e4251e4b0e7a613050be3',
-  clientSecret: '675e4251e4b0e7a613050be3-3lGGH5vhNS4RJxXb',
+  clientId: '68474924a586bce22a6e64f7-mbpkmyu4',
+  clientSecret: 'b5a7a120-7df7-4d23-8796-4863cbd08f94',
   redirectUri: 'https://dir.engageautomations.com/api/oauth/callback',
   scope: 'businesses.readonly businesses.write calendars.readonly calendars.write campaigns.readonly campaigns.write companies.readonly companies.write contacts.readonly contacts.write conversations.readonly conversations.write courses.readonly courses.write forms.readonly forms.write links.readonly links.write locations.readonly locations.write medias.readonly medias.write opportunities.readonly opportunities.write payments.write products.readonly products.write snapshots.readonly surveys.readonly surveys.write users.readonly users.write workflows.readonly workflows.write',
   authorizationUrl: 'https://marketplace.gohighlevel.com/oauth/chooselocation',
@@ -52,12 +52,12 @@ app.get('/', (req, res) => {
     const authenticatedCount = Array.from(installations.values()).filter(inst => inst.active).length;
     res.json({
       service: "GoHighLevel OAuth Backend",
-      version: "8.5.5-enum-fix",
+      version: "8.5.6-correct-credentials",
       installs: installations.size,
       authenticated: authenticatedCount,
       status: "operational",
-      features: ["oauth-standard", "token-refresh", "media-upload", "enum-fix"],
-      debug: "standard oauth without invalid enum parameters",
+      features: ["oauth-standard", "token-refresh", "media-upload", "correct-credentials"],
+      debug: "using correct client credentials from Client Key file",
       timestamp: new Date().toISOString(),
       uptime: process.uptime()
     });
@@ -98,10 +98,11 @@ app.get('/installations', (req, res) => {
   }
 });
 
-// OAuth callback - FIXED: Removed invalid user_type parameter
+// OAuth callback with correct credentials
 app.get('/api/oauth/callback', async (req, res) => {
   console.log('=== OAUTH CALLBACK START ===');
   console.log('Query params:', req.query);
+  console.log('Using CORRECT client credentials from Client Key file');
   
   try {
     const { code, error } = req.query;
@@ -123,25 +124,21 @@ app.get('/api/oauth/callback', async (req, res) => {
       });
     }
     
-    console.log('Starting token exchange with standard parameters...');
+    console.log('Starting token exchange with CORRECT credentials...');
     
-    // FIXED: Standard token exchange without invalid user_type parameter
+    // Standard token exchange with CORRECT credentials
     const tokenData = new URLSearchParams({
       client_id: OAUTH_CONFIG.clientId,
       client_secret: OAUTH_CONFIG.clientSecret,
       grant_type: 'authorization_code',
       code: code,
       redirect_uri: OAUTH_CONFIG.redirectUri
-      // REMOVED: user_type: 'location' - this was causing the 422 error
     });
     
-    console.log('Making token exchange request with valid parameters...');
-    console.log('Parameters:', {
-      client_id: OAUTH_CONFIG.clientId,
-      grant_type: 'authorization_code',
-      redirect_uri: OAUTH_CONFIG.redirectUri,
-      code: code.substring(0, 10) + '...'
-    });
+    console.log('Making token exchange request...');
+    console.log('Client ID:', OAUTH_CONFIG.clientId);
+    console.log('Redirect URI:', OAUTH_CONFIG.redirectUri);
+    console.log('Authorization code:', code.substring(0, 10) + '...');
     
     const response = await axios.post(OAUTH_CONFIG.tokenUrl, tokenData, {
       headers: {
@@ -161,11 +158,15 @@ app.get('/api/oauth/callback', async (req, res) => {
         error: 'Token exchange failed',
         details: response.data,
         status: response.status,
+        credentials_used: {
+          client_id: OAUTH_CONFIG.clientId,
+          redirect_uri: OAUTH_CONFIG.redirectUri
+        },
         timestamp: new Date().toISOString()
       });
     }
     
-    console.log('Token exchange successful!');
+    console.log('Token exchange successful with CORRECT credentials!');
     console.log('Token data:', {
       access_token: response.data.access_token ? 'received' : 'missing',
       refresh_token: response.data.refresh_token ? 'received' : 'missing',
@@ -187,7 +188,7 @@ app.get('/api/oauth/callback', async (req, res) => {
       active: true,
       created_at: new Date().toISOString(),
       token_status: 'valid',
-      user_type: 'standard'
+      client_id: OAUTH_CONFIG.clientId
     };
     
     installations.set(installationId, installation);
@@ -214,6 +215,10 @@ app.get('/api/oauth/callback', async (req, res) => {
     res.status(500).json({ 
       error: 'OAuth processing failed',
       message: error.message,
+      credentials_used: {
+        client_id: OAUTH_CONFIG.clientId,
+        redirect_uri: OAUTH_CONFIG.redirectUri
+      },
       timestamp: new Date().toISOString()
     });
   }
@@ -256,7 +261,7 @@ app.get('/api/token-access/:installationId', async (req, res) => {
       access_token: installation.access_token,
       location_id: installation.location_id,
       expires_in: Math.floor(timeUntilExpiry / 1000),
-      user_type: installation.user_type || 'standard',
+      client_id: installation.client_id,
       timestamp: new Date().toISOString()
     });
     
@@ -270,7 +275,7 @@ app.get('/api/token-access/:installationId', async (req, res) => {
   }
 });
 
-// Token refresh function
+// Token refresh function with correct credentials
 async function refreshToken(installationId) {
   const installation = installations.get(installationId);
   if (!installation?.refresh_token) {
@@ -345,8 +350,9 @@ function scheduleTokenRefresh(installationId) {
 // Start server
 const server = app.listen(port, () => {
   console.log(`OAuth Backend running on port ${port}`);
-  console.log('Version: 8.5.5-enum-fix');
-  console.log('Features: Standard OAuth without invalid enum parameters');
+  console.log('Version: 8.5.6-correct-credentials');
+  console.log('Features: Standard OAuth with CORRECT client credentials');
+  console.log('Client ID:', OAUTH_CONFIG.clientId);
 });
 
 server.on('error', (error) => {
