@@ -1,617 +1,257 @@
-// OAuth Backend v8.3.0-smart-discovery - Smart Location Discovery
-// Try to find actual installed location, fallback to known working locations
 
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
-const multer = require('multer');
-
-// Configure multer for file uploads
-const upload = multer({ 
-  dest: 'uploads/',
-  limits: { fileSize: 25 * 1024 * 1024 } // 25MB limit
-});
+const fetch = require('node-fetch');
+const cron = require('node-cron');
 
 const app = express();
-const port = process.env.PORT || 3000;
-
-// Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// In-memory install store
+// In-memory storage for installations
 const installations = new Map();
 
 // OAuth credentials
-const oauthCredentials = {
-  client_id: '68474924a586bce22a6e64f7-mbpkmyu4',
-  client_secret: 'b5a7a120-7df7-4d23-8796-4863cbd08f94',
-  redirect_uri: 'https://dir.engageautomations.com/api/oauth/callback'
-};
+const CLIENT_ID = '68474924a586bce22a6e64f7';
+const CLIENT_SECRET = 'mbpkmyu4';
+const CLIENT_KEY = '68474924a586bce22a6e64f7-mbpkmyu4';
 
-// Known working locations as fallback
-const knownWorkingLocations = [
-  'WAvk87RmW9rBSDJHeOpH', // MakerExpress 3D - confirmed working
-  'kQDg6qp2x7GXYJ1VCkI8', // Engage Automations
-  'eYeyzEWiaxcTOPROAo4C'  // Darul Uloom Tampa
-];
-
-console.log('🚀 OAuth Backend v8.3.0-smart-discovery Starting');
-console.log('✅ Smart Location Discovery: Find actual location first');
-console.log('✅ Fallback to known working locations if needed');
-
-// Enhanced token refresh
-async function enhancedRefreshAccessToken(id) {
-  const inst = installations.get(id);
-  
-  if (!inst) {
-    console.log(`[REFRESH] Installation ${id} not found`);
-    return false;
-  }
-
-  if (!inst.refreshToken) {
-    console.log(`[REFRESH] No refresh token for ${id} - OAuth reinstall required`);
-    inst.tokenStatus = 'refresh_required';
-    return false;
-  }
-
-  try {
-    console.log(`[REFRESH] Attempting token refresh for ${id}`);
-    
-    const body = new URLSearchParams({
-      client_id: oauthCredentials.client_id,
-      client_secret: oauthCredentials.client_secret,
-      grant_type: 'refresh_token',
-      refresh_token: inst.refreshToken
-    });
-
-    const { data } = await axios.post(
-      'https://services.leadconnectorhq.com/oauth/token',
-      body,
-      { 
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, 
-        timeout: 15000 
-      }
-    );
-
-    // Update installation with new tokens
-    inst.accessToken = data.access_token;
-    inst.refreshToken = data.refresh_token || inst.refreshToken;
-    inst.expiresIn = data.expires_in;
-    inst.expiresAt = Date.now() + data.expires_in * 1000;
-    inst.tokenStatus = 'valid';
-    inst.lastRefresh = new Date().toISOString();
-    
-    console.log(`[REFRESH] ✅ Token refreshed successfully for ${id}`);
-    return true;
-    
-  } catch (error) {
-    console.error(`[REFRESH] ❌ Failed to refresh token for ${id}:`, error.response?.data || error.message);
-    inst.tokenStatus = 'refresh_failed';
-    return false;
-  }
-}
-
-// Token exchange function
-async function exchangeCode(code, redirectUri) {
-  console.log('🔄 Exchanging authorization code for tokens');
-  
-  const body = new URLSearchParams();
-  body.append('client_id', oauthCredentials.client_id);
-  body.append('client_secret', oauthCredentials.client_secret);
-  body.append('grant_type', 'authorization_code');
-  body.append('code', code);
-  body.append('redirect_uri', redirectUri);
-
-  const response = await axios.post(
-    'https://services.leadconnectorhq.com/oauth/token',
-    body,
-    {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      timeout: 30000
-    }
-  );
-
-  console.log('✅ Token exchange successful');
-  return response.data;
-}
-
-// JWT token decoder
-function decodeJWTPayload(token) {
-  try {
-    const base64Payload = token.split('.')[1];
-    const payload = Buffer.from(base64Payload, 'base64').toString('utf-8');
-    return JSON.parse(payload);
-  } catch (error) {
-    console.error('Failed to decode JWT:', error);
-    return null;
-  }
-}
-
-// Smart location discovery
-async function discoverActualLocation(accessToken) {
-  console.log('🧠 Smart Location Discovery - Finding actual installed location');
-  
-  // Step 1: Try to get JWT location and test it first
-  const decoded = decodeJWTPayload(accessToken);
-  let jwtLocationId = null;
-  
-  if (decoded) {
-    if (decoded.authClass === 'Location') {
-      jwtLocationId = decoded.authClassId;
-    } else if (decoded.authClass === 'Company') {
-      jwtLocationId = decoded.primaryAuthClassId;
-    }
-    
-    if (jwtLocationId) {
-      console.log(`Testing JWT location: ${jwtLocationId}`);
-      
-      try {
-        const response = await fetch(`https://services.leadconnectorhq.com/products/?locationId=${jwtLocationId}`, {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Version': '2021-07-28',
-            'Accept': 'application/json'
-          }
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          const productCount = data.products ? data.products.length : 0;
-          
-          console.log(`✅ JWT location WORKS! ${jwtLocationId} (${productCount} products)`);
-          
-          return {
-            locationId: jwtLocationId,
-            productCount: productCount,
-            status: 'working',
-            method: 'jwt_location_works',
-            source: 'actual_install'
-          };
-        } else {
-          console.log(`❌ JWT location failed: ${response.status}`);
-        }
-      } catch (error) {
-        console.log(`❌ JWT location error: ${error.message}`);
-      }
-    }
-  }
-  
-  // Step 2: Try locations discovery API
-  console.log('Trying locations discovery APIs...');
-  
-  const locationEndpoints = [
-    'https://services.leadconnectorhq.com/locations/',
-    'https://rest.gohighlevel.com/v1/locations/'
-  ];
-  
-  for (const endpoint of locationEndpoints) {
-    try {
-      console.log(`Testing endpoint: ${endpoint}`);
-      
-      const response = await fetch(endpoint, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Version': '2021-07-28',
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('✅ Found locations data:', JSON.stringify(data, null, 2));
-        
-        if (data.locations && Array.isArray(data.locations) && data.locations.length > 0) {
-          // Test each discovered location
-          for (const location of data.locations) {
-            console.log(`Testing discovered location: ${location.id}`);
-            
-            try {
-              const testResponse = await fetch(`https://services.leadconnectorhq.com/products/?locationId=${location.id}`, {
-                headers: {
-                  'Authorization': `Bearer ${accessToken}`,
-                  'Version': '2021-07-28',
-                  'Accept': 'application/json'
-                }
-              });
-              
-              if (testResponse.ok) {
-                const testData = await testResponse.json();
-                const productCount = testData.products ? testData.products.length : 0;
-                
-                console.log(`✅ Discovered location WORKS! ${location.id} (${productCount} products)`);
-                
-                return {
-                  locationId: location.id,
-                  locationName: location.name || 'Discovered Location',
-                  productCount: productCount,
-                  status: 'working',
-                  method: 'api_discovery',
-                  source: 'discovered_location'
-                };
-              }
-            } catch (testError) {
-              console.log(`❌ Location ${location.id} test failed`);
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.log(`❌ Endpoint ${endpoint} failed`);
-    }
-  }
-  
-  // Step 3: Fallback to known working locations
-  console.log('Falling back to known working locations...');
-  
-  for (const locationId of knownWorkingLocations) {
-    try {
-      console.log(`Testing fallback location: ${locationId}`);
-      
-      const response = await fetch(`https://services.leadconnectorhq.com/products/?locationId=${locationId}`, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Version': '2021-07-28',
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        const productCount = data.products ? data.products.length : 0;
-        
-        console.log(`✅ Fallback location works: ${locationId} (${productCount} products)`);
-        
-        return {
-          locationId: locationId,
-          productCount: productCount,
-          status: 'working',
-          method: 'fallback_known_location',
-          source: 'known_working'
-        };
-      }
-    } catch (error) {
-      console.log(`❌ Fallback location ${locationId} failed`);
-    }
-  }
-  
-  console.log('❌ No working locations found');
-  return {
-    locationId: 'none_found',
-    status: 'no_access',
-    method: 'all_methods_failed'
-  };
-}
-
-// Store installation with smart location discovery
-async function storeInstall(tokenData) {
-  const id = `install_${Date.now()}`;
-  
-  console.log(`📦 Storing installation ${id}`);
-  
-  // Smart location discovery
-  const locationResult = await discoverActualLocation(tokenData.access_token);
-  
-  const installation = {
-    id,
-    accessToken: tokenData.access_token,
-    refreshToken: tokenData.refresh_token,
-    expiresIn: tokenData.expires_in,
-    expiresAt: Date.now() + tokenData.expires_in * 1000,
-    locationId: locationResult.locationId,
-    locationName: locationResult.locationName || locationResult.method,
-    locationStatus: locationResult.status,
-    discoveryMethod: locationResult.method,
-    discoverySource: locationResult.source,
-    productCount: locationResult.productCount || 0,
-    scopes: tokenData.scope ? tokenData.scope.split(' ') : [],
-    tokenStatus: 'valid',
-    createdAt: new Date().toISOString()
-  };
-  
-  installations.set(id, installation);
-  
-  console.log(`✅ Installation stored with location: ${locationResult.locationId} (via ${locationResult.method})`);
-  
-  return id;
-}
-
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    status: 'OAuth Backend v8.3.0-smart-discovery',
-    message: 'Smart location discovery - finds actual installed location',
-    timestamp: new Date().toISOString(),
-    approach: {
-      description: 'Smart multi-step location discovery',
-      steps: [
-        '1. Test JWT location first (might work for new installs)',
-        '2. Try locations discovery APIs',
-        '3. Fallback to known working locations',
-        '4. Use first working location found'
-      ],
-      fallbackLocations: knownWorkingLocations
-    },
-    features: [
-      'SMART location discovery (actual install first)',
-      'JWT location testing (for new installs)',
-      'API-based location discovery',
-      'Fallback to known working locations',
-      'Real API access validation',
-      'Enhanced bridge communication',
-      'Token health monitoring'
-    ]
-  });
-});
-
-// OAuth callback with smart location discovery
-app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
-  console.log('=== OAUTH CALLBACK RECEIVED ===');
-  console.log('Query params:', req.query);
-  
-  const { code, error, state } = req.query;
-  
-  if (error) {
-    console.error('OAuth error from GHL:', error);
-    return res.status(400).json({ 
-      success: false, 
-      error: 'OAuth authorization error', 
-      details: error 
-    });
-  }
+// OAuth callback - FIXED to use location-level authentication
+app.get('/api/oauth/callback', async (req, res) => {
+  const { code } = req.query;
   
   if (!code) {
-    console.error('No authorization code received');
-    return res.status(400).json({ 
-      success: false, 
-      error: 'Authorization code is required' 
-    });
+    console.error('❌ No authorization code provided');
+    return res.status(400).json({ error: 'No authorization code provided' });
   }
-  
-  try {
-    const redirectUri = req.path.startsWith('/api')
-      ? 'https://dir.engageautomations.com/api/oauth/callback'
-      : 'https://dir.engageautomations.com/oauth/callback';
 
-    console.log('Exchanging code for tokens...');
+  try {
+    console.log('🔄 Exchanging authorization code for LOCATION-LEVEL tokens...');
     
-    const tokenData = await exchangeCode(code, redirectUri);
-    console.log('✅ Token exchange successful');
+    // CRITICAL FIX: Use user_type: "location" for location-level authentication
+    const tokenResponse = await fetch('https://services.leadconnectorhq.com/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code: code,
+        user_type: 'location', // ✅ FIXED: Use location instead of company
+        redirect_uri: 'https://dir.engageautomations.com/api/oauth/callback'
+      }).toString()
+    });
+
+    if (!tokenResponse.ok) {
+      const errorText = await tokenResponse.text();
+      console.error('❌ Token exchange failed:', errorText);
+      return res.status(400).json({ error: 'Token exchange failed', details: errorText });
+    }
+
+    const tokenData = await tokenResponse.json();
+    console.log('✅ Location-level token exchange successful');
+    console.log('📊 Response fields:', Object.keys(tokenData));
     
-    console.log('🧠 Starting smart location discovery...');
-    const installationId = await storeInstall(tokenData);
-    console.log(`✅ Installation stored with ID: ${installationId}`);
+    // Extract location_id from response (should be more reliable now)
+    const locationId = tokenData.location_id;
+    console.log('🎯 LOCATION ID FROM RESPONSE:', locationId);
     
+    // Verify token is location-level by decoding JWT
+    if (tokenData.access_token) {
+      try {
+        const tokenParts = tokenData.access_token.split('.');
+        if (tokenParts.length === 3) {
+          const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
+          console.log('🔍 Token verification:');
+          console.log('   Auth Class:', payload.authClass);
+          console.log('   Auth Class ID:', payload.authClassId);
+          console.log('   Location Context:', payload.primaryAuthClassId);
+          
+          if (payload.authClass === 'Location') {
+            console.log('✅ SUCCESS: Token is Location-level!');
+          } else if (payload.authClass === 'Company') {
+            console.log('⚠️  WARNING: Still getting Company-level token');
+          } else {
+            console.log('💡 Info: Auth class is', payload.authClass);
+          }
+        }
+      } catch (decodeError) {
+        console.log('⚠️  Could not decode token for verification');
+      }
+    }
+
+    // Create installation with location-level context
+    const installationId = `install_${Date.now()}`;
+    const installation = {
+      id: installationId,
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token,
+      expires_in: tokenData.expires_in,
+      location_id: locationId,
+      auth_level: 'location', // Track that this is location-level
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + (tokenData.expires_in * 1000)).toISOString()
+    };
+
+    installations.set(installationId, installation);
+    
+    console.log('💾 Location-level installation stored:', installationId);
+    console.log('📍 Location ID:', locationId);
+    console.log('🔐 Auth Level: location');
+    console.log('⏰ Expires at:', installation.expires_at);
+
     // Redirect to frontend with installation ID
-    const frontendUrl = `https://listings.engageautomations.com/?installation_id=${installationId}&welcome=true`;
-    console.log('Redirecting to:', frontendUrl);
+    const frontendUrl = `https://listings.engageautomations.com/?installation_id=${installationId}&welcome=true&auth_level=location`;
+    console.log('🚀 Redirecting to:', frontendUrl);
     
     res.redirect(frontendUrl);
-    
+
   } catch (error) {
-    console.error('OAuth callback error:', error.response?.data || error.message);
-    res.status(500).json({ 
-      success: false, 
-      error: 'OAuth processing failed', 
-      details: error.response?.data || error.message 
-    });
+    console.error('❌ OAuth callback error:', error);
+    res.status(500).json({ error: 'OAuth callback failed', details: error.message });
   }
 });
 
-// Enhanced token access
-app.get('/api/token-access/:id', async (req, res) => {
-  const { id } = req.params;
-  const inst = installations.get(id);
-  
-  if (!inst) {
-    return res.status(404).json({ 
-      success: false, 
-      error: `Installation ${id} not found` 
-    });
+// Get installation by ID
+app.get('/api/installation/:id', (req, res) => {
+  const installation = installations.get(req.params.id);
+  if (!installation) {
+    return res.status(404).json({ error: 'Installation not found' });
   }
   
-  // Check if token needs refresh
-  const now = Date.now();
-  const timeUntilExpiry = inst.expiresAt - now;
-  
-  if (timeUntilExpiry < 600000) { // Less than 10 minutes
-    await enhancedRefreshAccessToken(id);
-  }
-  
+  // Return installation details with auth level info
   res.json({
-    access_token: inst.accessToken,
-    installation_id: id,
-    location_id: inst.locationId,
-    location_name: inst.locationName,
-    location_status: inst.locationStatus,
-    discovery_method: inst.discoveryMethod,
-    discovery_source: inst.discoverySource,
-    product_count: inst.productCount,
-    status: inst.tokenStatus,
-    expires_at: inst.expiresAt,
-    token_status: inst.tokenStatus
+    id: installation.id,
+    location_id: installation.location_id,
+    auth_level: installation.auth_level,
+    created_at: installation.created_at,
+    expires_at: installation.expires_at,
+    active: new Date() < new Date(installation.expires_at)
   });
 });
 
-// Installation status endpoint
-app.get('/api/installation-status/:id', (req, res) => {
-  const { id } = req.params;
-  const inst = installations.get(id);
+// Get access token for API calls (for API backend)
+app.get('/api/token-access/:id', (req, res) => {
+  const installation = installations.get(req.params.id);
+  if (!installation) {
+    return res.status(404).json({ error: 'Installation not found' });
+  }
   
-  if (!inst) {
-    return res.status(404).json({ 
-      success: false, 
-      error: `Installation ${id} not found` 
-    });
+  // Check if token is still valid
+  if (new Date() >= new Date(installation.expires_at)) {
+    return res.status(401).json({ error: 'Token expired' });
   }
   
   res.json({
-    success: true,
-    installation: {
-      id: inst.id,
-      locationId: inst.locationId,
-      locationName: inst.locationName,
-      locationStatus: inst.locationStatus,
-      discoveryMethod: inst.discoveryMethod,
-      discoverySource: inst.discoverySource,
-      productCount: inst.productCount,
-      tokenStatus: inst.tokenStatus,
-      createdAt: inst.createdAt,
-      expiresAt: inst.expiresAt
-    }
+    access_token: installation.access_token,
+    location_id: installation.location_id,
+    auth_level: installation.auth_level,
+    expires_at: installation.expires_at
   });
 });
 
-// Token health endpoint
-app.get('/api/token-health/:id', (req, res) => {
-  const { id } = req.params;
-  const inst = installations.get(id);
-  
-  if (!inst) {
-    return res.status(404).json({ 
-      success: false, 
-      error: `Installation ${id} not found` 
-    });
-  }
-  
-  const now = Date.now();
-  const timeUntilExpiry = inst.expiresAt - now;
-  const hoursUntilExpiry = Math.floor(timeUntilExpiry / (1000 * 60 * 60));
-  const needsRefresh = timeUntilExpiry < 3600000; // Less than 1 hour
-  
-  res.json({
-    success: true,
-    tokenHealth: {
-      status: inst.tokenStatus,
-      expiresAt: inst.expiresAt,
-      timeUntilExpiry,
-      hoursUntilExpiry,
-      needsRefresh
-    },
-    location: {
-      id: inst.locationId,
-      name: inst.locationName,
-      status: inst.locationStatus,
-      discoveryMethod: inst.discoveryMethod,
-      discoverySource: inst.discoverySource,
-      productCount: inst.productCount
-    }
-  });
-});
-
-// Bridge endpoints for API backend communication
-app.get('/api/bridge/oauth-credentials', (req, res) => {
-  res.json({
-    success: true,
-    credentials: oauthCredentials
-  });
-});
-
-app.post('/api/bridge/process-oauth', async (req, res) => {
-  const { code, redirect_uri } = req.body;
-  
-  if (!code) {
-    return res.status(400).json({ 
-      success: false, 
-      error: 'Authorization code required' 
-    });
-  }
-  
-  try {
-    const tokenData = await exchangeCode(code, redirect_uri);
-    const installationId = await storeInstall(tokenData);
-    
-    res.json({
-      success: true,
-      installation_id: installationId,
-      location_id: installations.get(installationId).locationId
-    });
-    
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'OAuth processing failed',
-      details: error.response?.data || error.message
-    });
-  }
-});
-
-app.get('/api/bridge/installation/:id', (req, res) => {
-  const { id } = req.params;
-  const inst = installations.get(id);
-  
-  if (!inst) {
-    return res.status(404).json({ 
-      success: false, 
-      error: 'Installation not found' 
-    });
-  }
-  
-  res.json({
-    success: true,
-    installation: {
-      id: inst.id,
-      active: inst.tokenStatus === 'valid',
-      location_id: inst.locationId,
-      location_name: inst.locationName,
-      discovery_method: inst.discoveryMethod,
-      discovery_source: inst.discoverySource,
-      product_count: inst.productCount,
-      expires_at: inst.expiresAt
-    }
-  });
-});
-
-// Legacy endpoints for compatibility
+// List all installations
 app.get('/installations', (req, res) => {
-  const activeInstallations = Array.from(installations.values()).map(inst => ({
+  const installationList = Array.from(installations.values()).map(inst => ({
     id: inst.id,
-    locationId: inst.locationId,
-    locationName: inst.locationName,
-    locationStatus: inst.locationStatus,
-    discoveryMethod: inst.discoveryMethod,
-    discoverySource: inst.discoverySource,
-    productCount: inst.productCount,
-    tokenStatus: inst.tokenStatus,
-    createdAt: inst.createdAt
+    location_id: inst.location_id,
+    auth_level: inst.auth_level,
+    created_at: inst.created_at,
+    expires_at: inst.expires_at,
+    active: new Date() < new Date(inst.expires_at)
   }));
   
   res.json({
-    installations: activeInstallations,
-    count: activeInstallations.length
+    count: installationList.length,
+    installations: installationList
   });
 });
 
-app.get('/api/oauth/status', (req, res) => {
-  const inst = installations.get(req.query.installation_id);
-  if (!inst) return res.json({ authenticated: false });
-  res.json({ 
-    authenticated: true, 
-    tokenStatus: inst.tokenStatus, 
-    locationId: inst.locationId,
-    discoveryMethod: inst.discoveryMethod,
-    discoverySource: inst.discoverySource,
-    productCount: inst.productCount
-  });
+// Token refresh system - also use location-level refresh
+async function refreshAccessToken(installationId) {
+  const installation = installations.get(installationId);
+  if (!installation) return;
+
+  try {
+    console.log(`🔄 Refreshing location-level token for ${installationId}`);
+    
+    const refreshResponse = await fetch('https://services.leadconnectorhq.com/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: 'refresh_token',
+        refresh_token: installation.refresh_token,
+        user_type: 'location' // ✅ FIXED: Maintain location-level on refresh
+      }).toString()
+    });
+
+    if (refreshResponse.ok) {
+      const newTokenData = await refreshResponse.json();
+      
+      // Update installation with new tokens
+      installation.access_token = newTokenData.access_token;
+      installation.expires_in = newTokenData.expires_in;
+      installation.expires_at = new Date(Date.now() + (newTokenData.expires_in * 1000)).toISOString();
+      
+      // Update location_id from refresh response if provided
+      if (newTokenData.location_id) {
+        installation.location_id = newTokenData.location_id;
+        console.log('📍 Updated location ID from refresh:', newTokenData.location_id);
+      }
+      
+      if (newTokenData.refresh_token) {
+        installation.refresh_token = newTokenData.refresh_token;
+      }
+      
+      installations.set(installationId, installation);
+      console.log(`✅ Location-level token refreshed for ${installationId}`);
+    } else {
+      console.error(`❌ Token refresh failed for ${installationId}`);
+    }
+  } catch (error) {
+    console.error(`❌ Token refresh error for ${installationId}:`, error);
+  }
+}
+
+// Background token refresh
+cron.schedule('*/10 * * * *', () => {
+  console.log('🔄 Checking location-level tokens for refresh...');
+  const now = new Date();
+  
+  for (const [id, installation] of installations) {
+    const expiryTime = new Date(installation.expires_at);
+    const timeUntilExpiry = expiryTime - now;
+    const tenMinutes = 10 * 60 * 1000;
+    
+    if (timeUntilExpiry < tenMinutes && timeUntilExpiry > 0) {
+      console.log(`⏰ Location token expiring soon for ${id}, refreshing...`);
+      refreshAccessToken(id);
+    }
+  }
 });
 
 // Health check
 app.get('/health', (req, res) => {
   res.json({ 
-    status: 'healthy', 
-    timestamp: new Date().toISOString(),
-    installations: installations.size
+    status: 'ok', 
+    version: '8.5.0-location-level-fix',
+    installations: installations.size,
+    auth_type: 'location',
+    timestamp: new Date().toISOString()
   });
 });
 
-// Start server
-app.listen(port, () => {
-  console.log(`✅ OAuth Backend v8.3.0-smart-discovery running on port ${port}`);
-  console.log(`✅ OAuth callback: https://dir.engageautomations.com/api/oauth/callback`);
-  console.log(`✅ Smart Location Discovery:`);
-  console.log(`   1. Test JWT location first (for new installs)`);
-  console.log(`   2. Try API location discovery`);
-  console.log(`   3. Fallback to known working locations`);
-  console.log(`   4. Use first working location found`);
-  console.log(`✅ Bridge endpoints active for API backend communication`);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 OAuth backend running on port ${PORT}`);
+  console.log('📍 Version: 8.5.0-location-level-fix');
+  console.log('✅ Now using LOCATION-LEVEL authentication');
+  console.log('🔐 user_type: location for all OAuth requests');
 });
