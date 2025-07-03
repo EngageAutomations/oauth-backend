@@ -1,5 +1,5 @@
-// OAuth Backend v7.0.3-working-location - FIXED Location Override
-// Overrides invalid JWT location with working location ID
+// OAuth Backend v8.0.0-universal-discovery - Dynamic Location Discovery
+// Discovers working locations from any GoHighLevel account automatically
 
 const express = require('express');
 const cors = require('cors');
@@ -30,19 +30,9 @@ const oauthCredentials = {
   redirect_uri: 'https://dir.engageautomations.com/api/oauth/callback'
 };
 
-// WORKING LOCATION IDS - Override invalid JWT locations
-const WORKING_LOCATIONS = {
-  'WAvk87RmW9rBSDJHeOpH': { name: 'MakerExpress 3D', products: 63 },
-  'kQDg6qp2x7GXYJ1VCkI8': { name: 'Engage Automations', products: 6 },
-  'eYeyzEWiaxcTOPROAo4C': { name: 'Darul Uloom Tampa', products: 3 }
-};
-
-// Default to the location with most products
-const DEFAULT_WORKING_LOCATION = 'WAvk87RmW9rBSDJHeOpH';
-
-console.log('🚀 OAuth Backend v7.0.3-working-location Starting');
-console.log('✅ Location Override: Using working location IDs instead of invalid JWT locations');
-console.log(`✅ Default Location: ${DEFAULT_WORKING_LOCATION} (${WORKING_LOCATIONS[DEFAULT_WORKING_LOCATION].name})`);
+console.log('🚀 OAuth Backend v8.0.0-universal-discovery Starting');
+console.log('✅ Universal Location Discovery: Works with any GoHighLevel account');
+console.log('✅ Dynamic location testing and validation system active');
 
 // Enhanced token refresh with proper error handling
 async function enhancedRefreshAccessToken(id) {
@@ -132,33 +122,266 @@ function decodeJWTPayload(token) {
   }
 }
 
-// Enhanced location selection with working location override
-function selectWorkingLocation(jwtLocationId, accessToken) {
-  console.log(`🔍 Location Selection for JWT location: ${jwtLocationId}`);
+// Universal Location Discovery Service
+async function discoverAccountLocations(accessToken, jwtLocationId) {
+  console.log('🔍 UNIVERSAL LOCATION DISCOVERY STARTING');
+  console.log(`JWT Location ID: ${jwtLocationId}`);
   
-  // Check if JWT location is in our known working locations
-  if (WORKING_LOCATIONS[jwtLocationId]) {
-    console.log(`✅ JWT location ${jwtLocationId} is in working locations list`);
-    return {
-      id: jwtLocationId,
-      name: WORKING_LOCATIONS[jwtLocationId].name,
-      status: 'jwt_location_working'
-    };
+  const discoveryResults = {
+    jwtLocationId,
+    discoveredLocations: [],
+    workingLocations: [],
+    bestLocation: null,
+    discoveryMethod: null,
+    discoveryStatus: 'starting'
+  };
+  
+  // Step 1: Try location discovery endpoints
+  console.log('Step 1: Attempting location discovery...');
+  
+  const locationEndpoints = [
+    { 
+      name: 'Services API Locations', 
+      url: 'https://services.leadconnectorhq.com/locations/',
+      method: 'GET'
+    },
+    { 
+      name: 'Services API Locations (no slash)', 
+      url: 'https://services.leadconnectorhq.com/locations',
+      method: 'GET'
+    },
+    { 
+      name: 'REST API v1 Locations', 
+      url: 'https://rest.gohighlevel.com/v1/locations/',
+      method: 'GET'
+    },
+    { 
+      name: 'REST API v1 Locations (no slash)', 
+      url: 'https://rest.gohighlevel.com/v1/locations',
+      method: 'GET'
+    }
+  ];
+  
+  for (const endpoint of locationEndpoints) {
+    try {
+      console.log(`Trying: ${endpoint.name}`);
+      
+      const response = await axios({
+        method: endpoint.method,
+        url: endpoint.url,
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Version': '2021-07-28',
+          'Accept': 'application/json'
+        },
+        timeout: 10000
+      });
+      
+      if (response.status === 200 && response.data) {
+        console.log(`✅ ${endpoint.name} responded with data`);
+        
+        let locations = [];
+        
+        // Parse different response formats
+        if (response.data.locations && Array.isArray(response.data.locations)) {
+          locations = response.data.locations;
+        } else if (Array.isArray(response.data)) {
+          locations = response.data;
+        } else if (response.data.data && Array.isArray(response.data.data)) {
+          locations = response.data.data;
+        }
+        
+        if (locations.length > 0) {
+          console.log(`✅ Found ${locations.length} locations via ${endpoint.name}`);
+          discoveryResults.discoveredLocations = locations;
+          discoveryResults.discoveryMethod = endpoint.name;
+          break;
+        }
+      }
+      
+    } catch (error) {
+      console.log(`❌ ${endpoint.name} failed: ${error.response?.status || error.message}`);
+    }
   }
   
-  // Override invalid JWT location with working one
-  console.log(`⚠️ JWT location ${jwtLocationId} is invalid - overriding with working location`);
-  console.log(`✅ Using working location: ${DEFAULT_WORKING_LOCATION} (${WORKING_LOCATIONS[DEFAULT_WORKING_LOCATION].name})`);
+  // Step 2: If no locations discovered, try company/user endpoints
+  if (discoveryResults.discoveredLocations.length === 0) {
+    console.log('Step 2: Trying company/user endpoints...');
+    
+    const userEndpoints = [
+      'https://services.leadconnectorhq.com/companies/',
+      'https://services.leadconnectorhq.com/companies/me',
+      'https://services.leadconnectorhq.com/users/me',
+      'https://services.leadconnectorhq.com/oauth/me'
+    ];
+    
+    for (const endpoint of userEndpoints) {
+      try {
+        console.log(`Trying user endpoint: ${endpoint}`);
+        
+        const response = await axios.get(endpoint, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Version': '2021-07-28',
+            'Accept': 'application/json'
+          },
+          timeout: 10000
+        });
+        
+        if (response.status === 200) {
+          console.log(`✅ ${endpoint} responded`);
+          console.log('Response data:', JSON.stringify(response.data, null, 2));
+          
+          // Look for locations in response
+          const data = response.data;
+          if (data.locations || data.user?.locations || data.company?.locations) {
+            const locations = data.locations || data.user?.locations || data.company?.locations;
+            console.log(`✅ Found locations in user data: ${locations.length}`);
+            discoveryResults.discoveredLocations = Array.isArray(locations) ? locations : [locations];
+            discoveryResults.discoveryMethod = endpoint;
+            break;
+          }
+        }
+        
+      } catch (error) {
+        console.log(`❌ ${endpoint} failed: ${error.response?.status || error.message}`);
+      }
+    }
+  }
   
-  return {
-    id: DEFAULT_WORKING_LOCATION,
-    name: WORKING_LOCATIONS[DEFAULT_WORKING_LOCATION].name,
-    status: 'overridden_with_working_location'
-  };
+  // Step 3: Test discovered locations for API access
+  if (discoveryResults.discoveredLocations.length > 0) {
+    console.log(`Step 3: Testing ${discoveryResults.discoveredLocations.length} locations for API access...`);
+    
+    for (const location of discoveryResults.discoveredLocations) {
+      const locationId = location.id || location.locationId || location._id;
+      const locationName = location.name || location.businessName || location.companyName || 'Unknown';
+      
+      if (!locationId) continue;
+      
+      console.log(`Testing location: ${locationName} (${locationId})`);
+      
+      try {
+        // Test products API
+        const productResponse = await axios.get(
+          `https://services.leadconnectorhq.com/products/?locationId=${locationId}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Version': '2021-07-28',
+              'Accept': 'application/json'
+            },
+            timeout: 5000
+          }
+        );
+        
+        if (productResponse.status === 200) {
+          const productsData = productResponse.data;
+          const productCount = productsData.products ? productsData.products.length : 0;
+          
+          console.log(`✅ Location ${locationId} has product API access (${productCount} products)`);
+          
+          const workingLocation = {
+            id: locationId,
+            name: locationName,
+            productCount: productCount,
+            hasProductAPI: true,
+            hasMediaAPI: false,
+            apiCapabilities: ['products']
+          };
+          
+          // Test media API too
+          try {
+            const mediaResponse = await axios.get(
+              `https://services.leadconnectorhq.com/medias/?locationId=${locationId}`,
+              {
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`,
+                  'Version': '2021-07-28',
+                  'Accept': 'application/json'
+                },
+                timeout: 5000
+              }
+            );
+            
+            if (mediaResponse.status === 200) {
+              console.log(`✅ Location ${locationId} also has media API access`);
+              workingLocation.hasMediaAPI = true;
+              workingLocation.apiCapabilities.push('medias');
+            }
+          } catch (mediaError) {
+            console.log(`⚠️ Location ${locationId} media API not accessible`);
+          }
+          
+          discoveryResults.workingLocations.push(workingLocation);
+        }
+        
+      } catch (productError) {
+        console.log(`❌ Location ${locationId} product API failed: ${productError.response?.status || productError.message}`);
+      }
+    }
+  }
+  
+  // Step 4: If no discovered locations work, test JWT location directly
+  if (discoveryResults.workingLocations.length === 0 && jwtLocationId && jwtLocationId !== 'unknown') {
+    console.log(`Step 4: Testing JWT location directly: ${jwtLocationId}`);
+    
+    try {
+      const jwtResponse = await axios.get(
+        `https://services.leadconnectorhq.com/products/?locationId=${jwtLocationId}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Version': '2021-07-28',
+            'Accept': 'application/json'
+          },
+          timeout: 5000
+        }
+      );
+      
+      if (jwtResponse.status === 200) {
+        const productsData = jwtResponse.data;
+        const productCount = productsData.products ? productsData.products.length : 0;
+        
+        console.log(`✅ JWT location ${jwtLocationId} works (${productCount} products)`);
+        
+        discoveryResults.workingLocations.push({
+          id: jwtLocationId,
+          name: 'JWT Location',
+          productCount: productCount,
+          hasProductAPI: true,
+          hasMediaAPI: false,
+          apiCapabilities: ['products'],
+          source: 'jwt'
+        });
+      }
+      
+    } catch (jwtError) {
+      console.log(`❌ JWT location ${jwtLocationId} failed: ${jwtError.response?.status || jwtError.message}`);
+    }
+  }
+  
+  // Step 5: Select best working location
+  if (discoveryResults.workingLocations.length > 0) {
+    // Sort by product count (descending) and select the best one
+    const sortedLocations = discoveryResults.workingLocations.sort((a, b) => b.productCount - a.productCount);
+    discoveryResults.bestLocation = sortedLocations[0];
+    discoveryResults.discoveryStatus = 'success';
+    
+    console.log(`✅ Best location selected: ${discoveryResults.bestLocation.name} (${discoveryResults.bestLocation.id})`);
+    console.log(`   Products: ${discoveryResults.bestLocation.productCount}`);
+    console.log(`   Capabilities: ${discoveryResults.bestLocation.apiCapabilities.join(', ')}`);
+  } else {
+    discoveryResults.discoveryStatus = 'no_working_locations';
+    console.log('❌ No working locations found with product API access');
+  }
+  
+  console.log('🔍 UNIVERSAL LOCATION DISCOVERY COMPLETE');
+  return discoveryResults;
 }
 
-// Store installation with working location override
-function storeInstall(tokenData) {
+// Store installation with universal location discovery
+async function storeInstall(tokenData) {
   const id = `install_${Date.now()}`;
   
   // Decode JWT to get location info
@@ -168,8 +391,8 @@ function storeInstall(tokenData) {
   console.log(`📦 Storing installation ${id}`);
   console.log('JWT Location ID:', jwtLocationId);
   
-  // Select working location (override invalid JWT location)
-  const location = selectWorkingLocation(jwtLocationId, tokenData.access_token);
+  // Run universal location discovery
+  const discoveryResults = await discoverAccountLocations(tokenData.access_token, jwtLocationId);
   
   const installation = {
     id,
@@ -177,15 +400,13 @@ function storeInstall(tokenData) {
     refreshToken: tokenData.refresh_token,
     expiresIn: tokenData.expires_in,
     expiresAt: Date.now() + tokenData.expires_in * 1000,
-    locationId: location.id,
-    locationName: location.name,
-    locationStatus: location.status,
-    jwtLocationId: jwtLocationId, // Keep original for reference
-    accountLocations: Object.keys(WORKING_LOCATIONS).map(id => ({
-      id,
-      name: WORKING_LOCATIONS[id].name,
-      products: WORKING_LOCATIONS[id].products
-    })),
+    locationId: discoveryResults.bestLocation?.id || jwtLocationId || 'unknown',
+    locationName: discoveryResults.bestLocation?.name || 'No working location found',
+    locationStatus: discoveryResults.discoveryStatus,
+    jwtLocationId: jwtLocationId,
+    discoveryResults: discoveryResults,
+    accountLocations: discoveryResults.discoveredLocations,
+    workingLocations: discoveryResults.workingLocations,
     scopes: tokenData.scope ? tokenData.scope.split(' ') : [],
     tokenStatus: 'valid',
     createdAt: new Date().toISOString()
@@ -193,34 +414,44 @@ function storeInstall(tokenData) {
   
   installations.set(id, installation);
   
-  console.log(`✅ Installation stored with working location: ${location.name} (${location.id})`);
+  if (discoveryResults.bestLocation) {
+    console.log(`✅ Installation stored with working location: ${discoveryResults.bestLocation.name} (${discoveryResults.bestLocation.id})`);
+  } else {
+    console.log(`⚠️ Installation stored but no working location found`);
+  }
   
   return id;
 }
 
-// Root endpoint with working location status
+// Root endpoint with universal discovery status
 app.get('/', (req, res) => {
   res.json({
-    status: 'OAuth Backend v7.0.3-working-location',
-    message: 'OAuth with WORKING location override',
+    status: 'OAuth Backend v8.0.0-universal-discovery',
+    message: 'Universal Location Discovery for ANY GoHighLevel account',
     timestamp: new Date().toISOString(),
-    locationOverride: {
-      default: DEFAULT_WORKING_LOCATION,
-      available: Object.keys(WORKING_LOCATIONS),
-      details: WORKING_LOCATIONS
+    universalDiscovery: {
+      description: 'Dynamically discovers working locations from any account',
+      capabilities: [
+        'Multi-endpoint location discovery',
+        'API access validation for each location',
+        'Intelligent best location selection',
+        'Fallback to JWT location if needed',
+        'Works with any GoHighLevel account structure'
+      ]
     },
     features: [
-      'WORKING location ID override (fixes invalid JWT locations)',
+      'UNIVERSAL location discovery (works with any account)',
+      'Dynamic API testing and validation',
+      'Intelligent location selection algorithm',
       'Correct OAuth credentials from client key file',
       'Fixed OAuth callback (no installation_id required)',
-      'Smart location detection',
       'Enhanced bridge communication',
       'Token health monitoring'
     ]
   });
 });
 
-// OAuth callback with working location override
+// OAuth callback with universal location discovery
 app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   console.log('=== OAUTH CALLBACK RECEIVED ===');
   console.log('Query params:', req.query);
@@ -254,7 +485,8 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
     const tokenData = await exchangeCode(code, redirectUri);
     console.log('✅ Token exchange successful');
     
-    const installationId = storeInstall(tokenData);
+    console.log('🔍 Starting universal location discovery...');
+    const installationId = await storeInstall(tokenData);
     console.log(`✅ Installation stored with ID: ${installationId}`);
     
     // Redirect to frontend with installation ID
@@ -273,7 +505,7 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
   }
 });
 
-// Enhanced token access with working location
+// Enhanced token access with universal discovery results
 app.get('/api/token-access/:id', async (req, res) => {
   const { id } = req.params;
   const inst = installations.get(id);
@@ -300,14 +532,15 @@ app.get('/api/token-access/:id', async (req, res) => {
     location_name: inst.locationName,
     location_status: inst.locationStatus,
     jwt_location_id: inst.jwtLocationId,
+    discovery_results: inst.discoveryResults,
+    working_locations: inst.workingLocations,
     status: inst.tokenStatus,
     expires_at: inst.expiresAt,
-    token_status: inst.tokenStatus,
-    working_location_override: inst.locationId !== inst.jwtLocationId
+    token_status: inst.tokenStatus
   });
 });
 
-// Installation status endpoint
+// Installation status endpoint with discovery details
 app.get('/api/installation-status/:id', (req, res) => {
   const { id } = req.params;
   const inst = installations.get(id);
@@ -327,11 +560,12 @@ app.get('/api/installation-status/:id', (req, res) => {
       locationName: inst.locationName,
       locationStatus: inst.locationStatus,
       jwtLocationId: inst.jwtLocationId,
+      discoveryResults: inst.discoveryResults,
       accountLocations: inst.accountLocations,
+      workingLocations: inst.workingLocations,
       tokenStatus: inst.tokenStatus,
       createdAt: inst.createdAt,
-      expiresAt: inst.expiresAt,
-      workingLocationOverride: inst.locationId !== inst.jwtLocationId
+      expiresAt: inst.expiresAt
     }
   });
 });
@@ -367,8 +601,9 @@ app.get('/api/token-health/:id', (req, res) => {
       name: inst.locationName,
       status: inst.locationStatus,
       jwtLocationId: inst.jwtLocationId,
-      totalLocations: inst.accountLocations.length,
-      workingLocationOverride: inst.locationId !== inst.jwtLocationId
+      discoveredLocations: inst.accountLocations?.length || 0,
+      workingLocations: inst.workingLocations?.length || 0,
+      discoveryMethod: inst.discoveryResults?.discoveryMethod
     }
   });
 });
@@ -393,7 +628,7 @@ app.post('/api/bridge/process-oauth', async (req, res) => {
   
   try {
     const tokenData = await exchangeCode(code, redirect_uri);
-    const installationId = storeInstall(tokenData);
+    const installationId = await storeInstall(tokenData);
     
     res.json({
       success: true,
@@ -440,9 +675,11 @@ app.get('/installations', (req, res) => {
     locationId: inst.locationId,
     locationName: inst.locationName,
     jwtLocationId: inst.jwtLocationId,
+    locationStatus: inst.locationStatus,
+    workingLocations: inst.workingLocations?.length || 0,
+    discoveryMethod: inst.discoveryResults?.discoveryMethod,
     tokenStatus: inst.tokenStatus,
-    createdAt: inst.createdAt,
-    workingLocationOverride: inst.locationId !== inst.jwtLocationId
+    createdAt: inst.createdAt
   }));
   
   res.json({
@@ -472,10 +709,12 @@ app.get('/health', (req, res) => {
 
 // Start server
 app.listen(port, () => {
-  console.log(`✅ OAuth Backend v7.0.3-working-location running on port ${port}`);
+  console.log(`✅ OAuth Backend v8.0.0-universal-discovery running on port ${port}`);
   console.log(`✅ OAuth callback: https://dir.engageautomations.com/api/oauth/callback`);
-  console.log(`✅ Working location override active:`);
-  console.log(`   Default: ${DEFAULT_WORKING_LOCATION} (${WORKING_LOCATIONS[DEFAULT_WORKING_LOCATION].name})`);
-  console.log(`   Available: ${Object.keys(WORKING_LOCATIONS).join(', ')}`);
+  console.log(`✅ Universal Location Discovery active:`);
+  console.log(`   → Works with ANY GoHighLevel account`);
+  console.log(`   → Dynamic location discovery and validation`);
+  console.log(`   → Intelligent best location selection`);
+  console.log(`   → No hardcoded location dependencies`);
   console.log(`✅ Bridge endpoints active for API backend communication`);
 });
