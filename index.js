@@ -1,3 +1,6 @@
+// LOCATION AUTH DEPLOYMENT: 2025-07-03T21:41:48.887Z
+// Force rebuild with user_type: location for media upload
+
 // OAuth Backend with Location-Level Authentication
 // Version: 8.5.7-location-auth
 
