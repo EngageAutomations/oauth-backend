@@ -1,5 +1,5 @@
-// Stable OAuth Backend - Version 8.5.4-crash-fix
-// Enhanced error handling and stability improvements
+// Fixed OAuth Backend - Remove Invalid user_type Parameter
+// Version: 8.5.5-enum-fix
 
 const express = require('express');
 const cors = require('cors');
@@ -10,20 +10,18 @@ const port = process.env.PORT || 3000;
 // Enhanced error handling
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
-  // Don't exit, just log
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Don't exit, just log
 });
 
-// Middleware with error handling
+// Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Request logging middleware
+// Request logging
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
@@ -38,7 +36,7 @@ app.use((error, req, res, next) => {
 // In-memory installations store
 const installations = new Map();
 
-// OAuth configuration
+// OAuth configuration - FIXED: No invalid user_type parameter
 const OAUTH_CONFIG = {
   clientId: '675e4251e4b0e7a613050be3',
   clientSecret: '675e4251e4b0e7a613050be3-3lGGH5vhNS4RJxXb',
@@ -54,12 +52,12 @@ app.get('/', (req, res) => {
     const authenticatedCount = Array.from(installations.values()).filter(inst => inst.active).length;
     res.json({
       service: "GoHighLevel OAuth Backend",
-      version: "8.5.4-crash-fix",
+      version: "8.5.5-enum-fix",
       installs: installations.size,
       authenticated: authenticatedCount,
       status: "operational",
-      features: ["oauth-location", "token-refresh", "media-upload", "crash-protection"],
-      debug: "stable location-level authentication",
+      features: ["oauth-standard", "token-refresh", "media-upload", "enum-fix"],
+      debug: "standard oauth without invalid enum parameters",
       timestamp: new Date().toISOString(),
       uptime: process.uptime()
     });
@@ -78,7 +76,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Installations endpoint with error protection
+// Installations endpoint
 app.get('/installations', (req, res) => {
   try {
     const installList = Array.from(installations.values()).map(inst => ({
@@ -100,7 +98,7 @@ app.get('/installations', (req, res) => {
   }
 });
 
-// OAuth callback with comprehensive error handling
+// OAuth callback - FIXED: Removed invalid user_type parameter
 app.get('/api/oauth/callback', async (req, res) => {
   console.log('=== OAUTH CALLBACK START ===');
   console.log('Query params:', req.query);
@@ -125,19 +123,25 @@ app.get('/api/oauth/callback', async (req, res) => {
       });
     }
     
-    console.log('Starting token exchange...');
+    console.log('Starting token exchange with standard parameters...');
     
-    // Token exchange with timeout and retry protection
+    // FIXED: Standard token exchange without invalid user_type parameter
     const tokenData = new URLSearchParams({
       client_id: OAUTH_CONFIG.clientId,
       client_secret: OAUTH_CONFIG.clientSecret,
       grant_type: 'authorization_code',
       code: code,
-      redirect_uri: OAUTH_CONFIG.redirectUri,
-      user_type: 'location'
+      redirect_uri: OAUTH_CONFIG.redirectUri
+      // REMOVED: user_type: 'location' - this was causing the 422 error
     });
     
-    console.log('Making token exchange request...');
+    console.log('Making token exchange request with valid parameters...');
+    console.log('Parameters:', {
+      client_id: OAUTH_CONFIG.clientId,
+      grant_type: 'authorization_code',
+      redirect_uri: OAUTH_CONFIG.redirectUri,
+      code: code.substring(0, 10) + '...'
+    });
     
     const response = await axios.post(OAUTH_CONFIG.tokenUrl, tokenData, {
       headers: {
@@ -145,10 +149,11 @@ app.get('/api/oauth/callback', async (req, res) => {
         'Accept': 'application/json'
       },
       timeout: 15000,
-      validateStatus: () => true // Accept all status codes
+      validateStatus: () => true
     });
     
     console.log(`Token exchange response: ${response.status}`);
+    console.log('Response data keys:', Object.keys(response.data || {}));
     
     if (response.status !== 200) {
       console.error('Token exchange failed:', response.data);
@@ -161,8 +166,15 @@ app.get('/api/oauth/callback', async (req, res) => {
     }
     
     console.log('Token exchange successful!');
+    console.log('Token data:', {
+      access_token: response.data.access_token ? 'received' : 'missing',
+      refresh_token: response.data.refresh_token ? 'received' : 'missing',
+      expires_in: response.data.expires_in,
+      location_id: response.data.locationId || 'not provided',
+      scope: response.data.scope
+    });
     
-    // Store installation safely
+    // Store installation
     const installationId = `install_${Date.now()}`;
     const installation = {
       id: installationId,
@@ -175,7 +187,7 @@ app.get('/api/oauth/callback', async (req, res) => {
       active: true,
       created_at: new Date().toISOString(),
       token_status: 'valid',
-      user_type: 'location'
+      user_type: 'standard'
     };
     
     installations.set(installationId, installation);
@@ -183,12 +195,11 @@ app.get('/api/oauth/callback', async (req, res) => {
     console.log(`Installation stored: ${installationId}`);
     console.log(`Location ID: ${installation.location_id}`);
     
-    // Schedule token refresh with error protection
+    // Schedule token refresh
     try {
       scheduleTokenRefresh(installationId);
     } catch (refreshError) {
       console.error('Token refresh scheduling failed:', refreshError);
-      // Don't fail the callback for this
     }
     
     // Redirect to frontend
@@ -200,7 +211,6 @@ app.get('/api/oauth/callback', async (req, res) => {
   } catch (error) {
     console.error('OAuth callback error:', error);
     
-    // Send error response without crashing
     res.status(500).json({ 
       error: 'OAuth processing failed',
       message: error.message,
@@ -209,7 +219,7 @@ app.get('/api/oauth/callback', async (req, res) => {
   }
 });
 
-// Token access endpoint with error protection
+// Token access endpoint
 app.get('/api/token-access/:installationId', async (req, res) => {
   try {
     const { installationId } = req.params;
@@ -239,7 +249,6 @@ app.get('/api/token-access/:installationId', async (req, res) => {
         await refreshToken(installationId);
       } catch (refreshError) {
         console.error('Token refresh failed:', refreshError);
-        // Return current token even if refresh failed
       }
     }
     
@@ -247,7 +256,7 @@ app.get('/api/token-access/:installationId', async (req, res) => {
       access_token: installation.access_token,
       location_id: installation.location_id,
       expires_in: Math.floor(timeUntilExpiry / 1000),
-      user_type: installation.user_type || 'location',
+      user_type: installation.user_type || 'standard',
       timestamp: new Date().toISOString()
     });
     
@@ -261,7 +270,7 @@ app.get('/api/token-access/:installationId', async (req, res) => {
   }
 });
 
-// Token refresh function with error protection
+// Token refresh function
 async function refreshToken(installationId) {
   const installation = installations.get(installationId);
   if (!installation?.refresh_token) {
@@ -310,7 +319,7 @@ async function refreshToken(installationId) {
   }
 }
 
-// Token refresh scheduling with error protection
+// Token refresh scheduling
 function scheduleTokenRefresh(installationId) {
   try {
     const installation = installations.get(installationId);
@@ -333,14 +342,13 @@ function scheduleTokenRefresh(installationId) {
   }
 }
 
-// Start server with error protection
+// Start server
 const server = app.listen(port, () => {
   console.log(`OAuth Backend running on port ${port}`);
-  console.log('Version: 8.5.4-crash-fix');
-  console.log('Features: Stable location-level authentication, comprehensive error handling');
+  console.log('Version: 8.5.5-enum-fix');
+  console.log('Features: Standard OAuth without invalid enum parameters');
 });
 
-// Handle server errors
 server.on('error', (error) => {
   console.error('Server error:', error);
 });
