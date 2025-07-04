@@ -39,6 +39,17 @@ const LOCATION_SCOPES = [
 const installations = new Map();
 const tokens = new Map();
 
+
+// Health check endpoint for Railway
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'healthy',
+    service: 'GoHighLevel OAuth Backend',
+    version: '8.9.0-location-only',
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.get('/', (req, res) => {
   res.json({
     service: 'GoHighLevel OAuth Backend',
