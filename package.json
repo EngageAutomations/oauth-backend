@@ -1,16 +1,20 @@
 {
-  "name": "oauth-backend",
-  "version": "8.6.0-location-only",
-  "description": "GoHighLevel OAuth Backend with Location-level authentication",
+  "name": "oauth-backend-emergency",
+  "version": "5.1.2-stable-revert",
+  "description": "Stable OAuth backend with multi-installation support - REVERTED",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5"
+    "express": "latest",
+    "cors": "latest",
+    "axios": "latest",
+    "multer": "latest",
+    "form-data": "latest"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18"
   }
 }
