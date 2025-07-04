@@ -1,7 +1,7 @@
 /**
- * GoHighLevel OAuth Backend - Location-Only Access
- * Version: 8.9.0-location-only
- * Uses proper scopes for Location-level token generation per GoHighLevel docs
+ * GoHighLevel OAuth Backend - Correct Location-Level Implementation
+ * Version: 9.0.0-correct-location
+ * Uses user_type: 'Location' parameter from official GoHighLevel OAuth demo
  */
 
 const express = require('express');
@@ -17,35 +17,16 @@ const CLIENT_ID = '68474924a586bce22a6e64f7-mbpkmyu4';
 const CLIENT_SECRET = 'b5a7a120-7df7-4d23-8796-4863cbd08f94';
 const REDIRECT_URI = 'https://dir.engageautomations.com/api/oauth/callback';
 
-// Location-level scopes per GoHighLevel documentation
-const LOCATION_SCOPES = [
-  'contacts.readonly',
-  'contacts.write', 
-  'conversations.readonly',
-  'conversations.write',
-  'calendars.readonly',
-  'calendars.write',
-  'businesses.readonly',
-  'businesses.write',
-  'locations.readonly',
-  'locations.write',
-  'medias.readonly',
-  'medias.write', // Required for media upload
-  'products.readonly',
-  'products.write'
-].join(' ');
-
 // In-memory storage
 const installations = new Map();
 const tokens = new Map();
-
 
 // Health check endpoint for Railway
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'healthy',
     service: 'GoHighLevel OAuth Backend',
-    version: '8.9.0-location-only',
+    version: '9.0.0-correct-location',
     timestamp: new Date().toISOString()
   });
 });
@@ -53,13 +34,12 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     service: 'GoHighLevel OAuth Backend',
-    version: '8.9.0-location-only',
+    version: '9.0.0-correct-location',
     installs: installations.size,
     authenticated: tokens.size,
     status: 'operational',
-    features: ['location-only-scopes', 'media-upload', 'token-refresh'],
-    scopes: LOCATION_SCOPES,
-    debug: 'using Location-level scopes per GoHighLevel documentation',
+    features: ['location-user-type', 'media-upload', 'token-refresh'],
+    debug: 'using user_type Location parameter from official GoHighLevel demo',
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
@@ -71,26 +51,6 @@ app.get('/installations', (req, res) => {
     count: installList.length,
     installations: installList
   });
-});
-
-// OAuth authorization with Location-level scopes
-app.get('/api/oauth/authorize', (req, res) => {
-  console.log('🔄 Initiating Location-level OAuth with proper scopes');
-  
-  // Use official GoHighLevel authorization URL format with Location scopes
-  const authParams = new URLSearchParams({
-    response_type: 'code',
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
-    scope: LOCATION_SCOPES
-  });
-  
-  const authUrl = `https://marketplace.gohighlevel.com/oauth/chooselocation?${authParams.toString()}`;
-  
-  console.log('📄 Authorization URL with Location scopes:', authUrl);
-  console.log('📋 Requested scopes:', LOCATION_SCOPES);
-  
-  res.redirect(authUrl);
 });
 
 app.get('/api/oauth/callback', async (req, res) => {
@@ -108,8 +68,8 @@ app.get('/api/oauth/callback', async (req, res) => {
   try {
     console.log('🔄 Exchanging code for Location-level token...');
     
-    // Standard OAuth token exchange (no user_type parameter)
-    const tokenData = await exchangeCodeStandard(code);
+    // Use official GoHighLevel OAuth demo method with user_type: 'Location'
+    const tokenData = await exchangeCodeForLocationToken(code);
     
     if (!tokenData.access_token) {
       console.log('❌ No access token in response:', tokenData);
@@ -138,7 +98,7 @@ app.get('/api/oauth/callback', async (req, res) => {
       token_status: 'valid',
       auth_class: authClass || 'unknown',
       scopes: scopes,
-      requested_scopes: LOCATION_SCOPES
+      method: 'user_type Location parameter'
     };
     
     installations.set(installationId, installation);
@@ -152,17 +112,16 @@ app.get('/api/oauth/callback', async (req, res) => {
       scopes: scopes
     });
     
-    console.log('✅ Location-only installation created:', installationId);
+    console.log('✅ Location-level installation created:', installationId);
     console.log('📍 Location ID:', locationId);
     console.log('🔐 Auth Class:', authClass);
     console.log('📋 Scopes:', scopes);
     
     // Test media upload capability immediately
-    if (authClass === 'Location' && scopes.includes('medias.write')) {
-      console.log('🎉 SUCCESS: Location-level token with media upload access!');
+    if (authClass === 'Location') {
+      console.log('🎉 SUCCESS: Location-level token generated!');
     } else if (authClass === 'Company') {
-      console.log('⚠️  WARNING: Still received Company-level token');
-      console.log('   This suggests app configuration may need updating in GoHighLevel marketplace');
+      console.log('⚠️  WARNING: Still received Company-level token despite user_type parameter');
     }
     
     // Redirect to frontend
@@ -174,23 +133,23 @@ app.get('/api/oauth/callback', async (req, res) => {
   }
 });
 
-// Standard OAuth token exchange per GoHighLevel docs
-async function exchangeCodeStandard(code) {
+// Token exchange with user_type: 'Location' from official GoHighLevel demo
+async function exchangeCodeForLocationToken(code) {
   return new Promise((resolve, reject) => {
-    // Use standard OAuth 2.0 parameters only
+    // Use exact parameters from official GoHighLevel OAuth demo
     const params = new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      grant_type: 'authorization_code',
-      code: code,
-      redirect_uri: REDIRECT_URI
-      // NO user_type parameter - auth class determined by scopes
+      'client_id': CLIENT_ID,
+      'client_secret': CLIENT_SECRET,
+      'grant_type': 'authorization_code',
+      'code': code,
+      'user_type': 'Location',  // KEY PARAMETER from official demo
+      'redirect_uri': REDIRECT_URI
     });
     
     const postData = params.toString();
     
-    console.log('🔄 Token exchange with standard OAuth 2.0:');
-    console.log('📄 Method: Standard OAuth flow, auth class determined by requested scopes');
+    console.log('🔄 Token exchange with user_type Location (official demo method):');
+    console.log('📄 Parameters: client_id, client_secret, grant_type, code, user_type: Location, redirect_uri');
     
     const options = {
       hostname: 'services.leadconnectorhq.com',
@@ -198,6 +157,7 @@ async function exchangeCodeStandard(code) {
       path: '/oauth/token',
       method: 'POST',
       headers: {
+        'Accept': 'application/json',
         'Content-Type': 'application/x-www-form-urlencoded',
         'Content-Length': postData.length
       }
@@ -267,7 +227,6 @@ app.get('/api/token-access/:installationId', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 GoHighLevel OAuth Backend running on port ${PORT}`);
-  console.log('🎯 Mode: Location-only access with proper scopes');
-  console.log('📋 Features: Media upload access, Location-level tokens');
-  console.log('📄 Scopes:', LOCATION_SCOPES);
+  console.log('🎯 Mode: Location-level tokens using official demo method');
+  console.log('📋 Features: user_type Location parameter, media upload access');
 });
