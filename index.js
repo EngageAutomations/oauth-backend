@@ -1,7 +1,7 @@
 /**
- * GoHighLevel OAuth Backend - Location-Only Authentication
- * Version: 8.6.0-location-only
- * Forces Location-level token generation for media upload access
+ * GoHighLevel OAuth Backend - Location-Level Access
+ * Version: 8.8.0-location-access
+ * Properly configured for Location-level token generation
  */
 
 const express = require('express');
@@ -12,7 +12,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// OAuth Credentials
+// OAuth Credentials - verified working
 const CLIENT_ID = '68474924a586bce22a6e64f7-mbpkmyu4';
 const CLIENT_SECRET = 'b5a7a120-7df7-4d23-8796-4863cbd08f94';
 const REDIRECT_URI = 'https://dir.engageautomations.com/api/oauth/callback';
@@ -24,12 +24,12 @@ const tokens = new Map();
 app.get('/', (req, res) => {
   res.json({
     service: 'GoHighLevel OAuth Backend',
-    version: '8.6.0-location-only',
+    version: '8.8.0-location-access',
     installs: installations.size,
     authenticated: tokens.size,
     status: 'operational',
-    features: ['location-only-auth', 'media-upload', 'token-refresh'],
-    debug: 'forcing Location-level authentication only',
+    features: ['location-oauth', 'token-refresh', 'media-access'],
+    debug: 'configured for Location-level token generation',
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
@@ -41,6 +41,25 @@ app.get('/installations', (req, res) => {
     count: installList.length,
     installations: installList
   });
+});
+
+// OAuth authorization - redirect to GoHighLevel with Location-level scope
+app.get('/api/oauth/authorize', (req, res) => {
+  console.log('🔄 Initiating Location-level OAuth authorization');
+  
+  const authParams = new URLSearchParams({
+    response_type: 'code',
+    client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI,
+    scope: 'locations.readonly locations.write medias.write medias.readonly products.write products.readonly', // Location-specific scopes
+    access_type: 'offline', // Request refresh token
+    state: req.query.state || 'location_level_auth'
+  });
+  
+  const authUrl = `https://marketplace.gohighlevel.com/oauth/chooselocation?${authParams.toString()}`;
+  
+  console.log('📄 Authorization URL:', authUrl);
+  res.redirect(authUrl);
 });
 
 app.get('/api/oauth/callback', async (req, res) => {
@@ -58,16 +77,23 @@ app.get('/api/oauth/callback', async (req, res) => {
   try {
     console.log('🔄 Exchanging code for Location-level token...');
     
-    // Force Location-level authentication
-    const tokenData = await exchangeCodeForLocationToken(code);
+    // Exchange code for Location-level token
+    const tokenData = await exchangeForLocationToken(code);
     
     if (!tokenData.access_token) {
       console.log('❌ No access token in response:', tokenData);
       return res.status(400).json({ error: 'Failed to get access token', details: tokenData });
     }
     
-    // Extract location ID from JWT token
-    const locationId = extractLocationId(tokenData.access_token);
+    // Extract token details
+    const tokenPayload = decodeJWTPayload(tokenData.access_token);
+    const locationId = tokenPayload?.locationId || tokenPayload?.location_id;
+    const authClass = tokenPayload?.authClass;
+    
+    console.log('🔍 Token payload analysis:');
+    console.log('📍 Location ID:', locationId);
+    console.log('🔐 Auth Class:', authClass);
+    console.log('📄 Full payload:', tokenPayload);
     
     const installationId = `install_${Date.now()}`;
     
@@ -77,7 +103,7 @@ app.get('/api/oauth/callback', async (req, res) => {
       active: true,
       created_at: new Date().toISOString(),
       token_status: 'valid',
-      auth_class: 'Location',
+      auth_class: authClass || 'unknown',
       scopes: tokenData.scope || 'not available'
     };
     
@@ -87,11 +113,13 @@ app.get('/api/oauth/callback', async (req, res) => {
       refresh_token: tokenData.refresh_token,
       expires_in: tokenData.expires_in,
       expires_at: Date.now() + (tokenData.expires_in * 1000),
-      location_id: locationId
+      location_id: locationId,
+      auth_class: authClass
     });
     
     console.log('✅ Location-level installation created:', installationId);
     console.log('📍 Location ID:', locationId);
+    console.log('🔐 Auth Class:', authClass);
     
     // Redirect to frontend
     res.redirect(`https://listings.engageautomations.com/?installation_id=${installationId}&welcome=true`);
@@ -102,21 +130,22 @@ app.get('/api/oauth/callback', async (req, res) => {
   }
 });
 
-async function exchangeCodeForLocationToken(code) {
+// Token exchange with Location-level request
+async function exchangeForLocationToken(code) {
   return new Promise((resolve, reject) => {
-    // Force Location-level authentication
-    const params = new URLSearchParams();
-    params.append('client_id', CLIENT_ID);
-    params.append('client_secret', CLIENT_SECRET);
-    params.append('grant_type', 'authorization_code');
-    params.append('code', code);
-    params.append('redirect_uri', REDIRECT_URI);
-    params.append('user_type', 'Location'); // Force Location-level authentication
+    const params = new URLSearchParams({
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code: code,
+      redirect_uri: REDIRECT_URI,
+      scope: 'locations.readonly locations.write medias.write medias.readonly products.write products.readonly' // Request Location-level scopes
+    });
     
     const postData = params.toString();
     
-    console.log('🔄 Token exchange request (Location-only):');
-    console.log('📄 user_type: Location (forcing location-level auth)');
+    console.log('🔄 Token exchange request for Location-level access:');
+    console.log('📄 Scope: Location-level permissions requested');
     
     const options = {
       hostname: 'services.leadconnectorhq.com',
@@ -154,15 +183,15 @@ async function exchangeCodeForLocationToken(code) {
   });
 }
 
-function extractLocationId(token) {
+function decodeJWTPayload(token) {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     
     const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-    return payload.locationId || payload.location_id || null;
+    return payload;
   } catch (error) {
-    console.error('❌ Error extracting location ID:', error);
+    console.error('❌ Error decoding JWT payload:', error);
     return null;
   }
 }
@@ -184,13 +213,14 @@ app.get('/api/token-access/:installationId', (req, res) => {
     access_token: tokenData.access_token,
     token_type: 'Bearer',
     expires_in: Math.floor((tokenData.expires_at - Date.now()) / 1000),
-    location_id: tokenData.location_id
+    location_id: tokenData.location_id,
+    auth_class: tokenData.auth_class
   });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 GoHighLevel OAuth Backend running on port ${PORT}`);
-  console.log('🎯 Mode: Location-only authentication');
-  console.log('📊 Features: Location-level tokens, media upload access');
+  console.log('🎯 Mode: Location-level token generation');
+  console.log('📊 Features: Location-specific scopes, media upload access');
 });
