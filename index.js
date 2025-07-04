@@ -1,4 +1,3 @@
-// DEPLOYED: 2025-07-04T12:45:21.339Z - Stable version v5.1.2-stable-revert
 // OAuth Backend Fix - Add missing endpoints for installation tracking
 // This file adds the missing /installations endpoint and debugging
 
