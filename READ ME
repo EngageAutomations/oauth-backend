@@ -18,7 +18,6 @@ Railway backend with embedded OAuth credentials to bypass environment variable d
 3. Existing OAuth routes work without changes
 4. Installation callbacks processed normally
 
-Railway will now successfully handle OAuth installations.
 
 ## Architecture
 
