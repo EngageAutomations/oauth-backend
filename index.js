@@ -492,14 +492,58 @@ app.get(['/oauth/callback', '/api/oauth/callback'], async (req, res) => {
     const id = storeInstall(tokenData);
     console.log('Installation stored with ID:', id);
     
-    const url = `https://directoryengine.engageautomations.com/welcome?installation_id=${id}`;
+    const url = `https://dir.engageautomations.com/welcome?installation_id=${id}`;
     console.log('Redirecting to:', url);
-    
     res.redirect(url);
   } catch (e) {
     console.error('OAuth error:', e.response?.data || e.message);
     res.status(500).json({ error: 'OAuth failed', details: e.response?.data || e.message });
   }
+});
+
+// WELCOME PAGE FOR SUCCESSFUL INSTALLATION
+app.get('/welcome', (req, res) => {
+  const { installation_id } = req.query;
+  
+  if (!installation_id) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'installation_id required' 
+    });
+  }
+  
+  const installation = installations.get(installation_id);
+  
+  if (!installation) {
+    return res.status(404).json({ 
+      success: false, 
+      error: 'Installation not found' 
+    });
+  }
+  
+  // Return JSON response for successful installation
+  res.json({
+    success: true,
+    message: 'OAuth installation completed successfully',
+    installation: {
+      id: installation_id,
+      location_id: installation.locationId,
+      status: installation.tokenStatus,
+      scopes: installation.scopes,
+      created_at: installation.createdAt
+    },
+    next_steps: [
+      'Your GoHighLevel app is now connected',
+      'You can start using the API endpoints',
+      'Check the documentation for available features'
+    ],
+    available_features: [
+      'Product management',
+      'Media upload',
+      'Pricing management',
+      'Collection management'
+    ]
+  });
 });
 
 app.get('/api/oauth/status', (req, res) => {
