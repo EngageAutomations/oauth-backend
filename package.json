@@ -1,20 +1,21 @@
 {
-  "name": "oauth-backend-emergency",
-  "version": "5.4.2-field-fix",
-  "description": "Complete GoHighLevel OAuth Backend with working media upload and pricing",
+  "name": "secure-bridge-minimal",
+  "version": "1.0.0",
+  "description": "Minimal secure bridge deployment",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js"
-  },
-  "dependencies": {
-    "express": "latest",
-    "cors": "latest",
-    "axios": "latest",
-    "multer": "latest",
-    "form-data": "latest"
+    "start": "node index.js"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0",
+    "multer": "^1.4.4",
+    "form-data": "^4.0.0",
+    "express-rate-limit": "^6.7.0",
+    "helmet": "^6.1.5"
   }
 }
