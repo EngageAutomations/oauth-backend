@@ -1,29 +1,9 @@
 [build]
-builder = "nixpacks"
-watchPatterns = ["server/**/*.ts", "server/**/*.js"]
+builder = "DOCKERFILE"
 
 [deploy]
-startCommand = "npm run start"
+startCommand = "npm start"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
-
-[env]
-NODE_ENV = "production"
-
-[service]
-port = 3000
-internal_port = 3000
-protocol = "http"
-
-[service.autoscaling]
-enabled = true
-minReplicas = 1
-maxReplicas = 3
-targetCPUUtilizationPercentage = 80
-targetMemoryUtilizationPercentage = 80
-
-[service.resources]
-cpu = 1000
-memory = 512
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
