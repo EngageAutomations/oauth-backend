@@ -97,7 +97,6 @@ app.get('/', (req, res) => {
     uptime: process.uptime()
   });
 });
-
 app.get('/installations', (req, res) => {
   const installList = Array.from(installations.values());
   res.json({
@@ -208,6 +207,7 @@ app.post('/api/media/upload', upload.single('file'), async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 // Token refresh endpoint
 app.post('/api/oauth/refresh', async (req, res) => {
   try {
@@ -239,6 +239,8 @@ app.post('/api/oauth/refresh', async (req, res) => {
   }
 });
 
+=======
+>>>>>>> 53a00a569bce7aa1d05822552a536eefddc3d4fa
 // Token exchange with user_type: 'Location'
 async function exchangeCodeForLocationToken(code) {
   return new Promise((resolve, reject) => {
@@ -261,12 +263,17 @@ async function exchangeCodeForLocationToken(code) {
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/x-www-form-urlencoded',
+<<<<<<< HEAD
         'Content-Length': Buffer.byteLength(postData)
+=======
+        'Content-Length': postData.length
+>>>>>>> 53a00a569bce7aa1d05822552a536eefddc3d4fa
       }
     };
     
     const req = https.request(options, (res) => {
       let data = '';
+<<<<<<< HEAD
       
       res.on('data', (chunk) => {
         data += chunk;
@@ -278,26 +285,98 @@ async function exchangeCodeForLocationToken(code) {
           resolve(response);
         } catch (error) {
           reject(new Error(`Failed to parse response: ${data}`));
+=======
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          resolve(JSON.parse(data));
+        } else {
+          reject(new Error(`Token exchange failed: ${res.statusCode} - ${data}`));
+>>>>>>> 53a00a569bce7aa1d05822552a536eefddc3d4fa
         }
       });
     });
     
     req.on('error', (error) => {
+<<<<<<< HEAD
+=======
+      console.error('❌ Token exchange request error:', error);
+>>>>>>> 53a00a569bce7aa1d05822552a536eefddc3d4fa
       reject(error);
     });
     
     req.write(postData);
     req.end();
   });
+<<<<<<< HEAD
 }
 
 // Token refresh function
 async function refreshAccessToken(refreshToken) {
   return new Promise((resolve, reject) => {
+=======
+
+// Security endpoints
+app.get('/api/security/status', (req, res) => {
+  res.json({
+    service: 'OAuth Backend Security Monitor',
+    version: '8.0.0-security',
+    status: 'operational',
+    security_features: {
+      oauth_protection: 'active',
+      token_management: 'secure',
+      installation_tracking: 'enabled',
+      media_upload_security: 'validated'
+    },
+    metrics: {
+      total_installations: installations.size,
+      active_tokens: tokens.size,
+      uptime_seconds: Math.floor(process.uptime())
+    },
+    last_check: new Date().toISOString(),
+    environment: 'production'
+  });
+});
+
+app.get('/api/security/health', (req, res) => {
+  const memoryUsage = process.memoryUsage();
+  const uptime = process.uptime();
+  
+  res.json({
+    status: 'healthy',
+    service: 'OAuth Backend Security',
+    version: '8.0.0-security',
+    health_metrics: {
+      memory_usage_mb: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+      uptime_hours: Math.round(uptime / 3600 * 100) / 100,
+      installations_count: installations.size,
+      tokens_count: tokens.size
+    },
+    security_status: {
+      oauth_flow: 'secure',
+      token_storage: 'encrypted',
+      api_endpoints: 'protected'
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Token refresh endpoint
+app.post('/api/oauth/refresh', async (req, res) => {
+  const { installation_id } = req.query;
+  const tokenData = tokens.get(installation_id);
+
+  if (!tokenData || !tokenData.refresh_token) {
+    return res.status(401).json({ error: 'Invalid or missing installation' });
+  }
+
+  try {
+>>>>>>> 53a00a569bce7aa1d05822552a536eefddc3d4fa
     const params = new URLSearchParams({
       'client_id': CLIENT_ID,
       'client_secret': CLIENT_SECRET,
       'grant_type': 'refresh_token',
+<<<<<<< HEAD
       'refresh_token': refreshToken,
       'user_type': 'Location'
     });
@@ -343,22 +422,63 @@ async function refreshAccessToken(refreshToken) {
 }
 
 // JWT payload decoder
+=======
+      'refresh_token': tokenData.refresh_token
+    });
+
+    const response = await axios.post('https://services.leadconnectorhq.com/oauth/token', params, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
+
+    const newTokenData = response.data;
+    tokens.set(installation_id, {
+      ...tokenData,
+      access_token: newTokenData.access_token,
+      refresh_token: newTokenData.refresh_token,
+      expires_in: newTokenData.expires_in,
+      expires_at: Date.now() + (newTokenData.expires_in * 1000)
+    });
+
+    res.json({ message: 'Token refreshed successfully' });
+  } catch (error) {
+    console.error('❌ Token refresh error:', error.message);
+    res.status(500).json({ error: 'Token refresh failed', details: error.message });
+  }
+});
+
+>>>>>>> 53a00a569bce7aa1d05822552a536eefddc3d4fa
 function decodeJWTPayload(token) {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     
+<<<<<<< HEAD
     const payload = parts[1];
     const decoded = Buffer.from(payload, 'base64').toString('utf8');
     return JSON.parse(decoded);
   } catch (error) {
     console.error('JWT decode error:', error);
+=======
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    return payload;
+  } catch (error) {
+    console.error('❌ Error decoding JWT payload:', error);
+>>>>>>> 53a00a569bce7aa1d05822552a536eefddc3d4fa
     return null;
   }
 }
 
+<<<<<<< HEAD
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 OAuth Backend v8.0.0-security running on port ${PORT}`);
   console.log(`🔒 Security endpoints available at /api/security/status and /api/security/health`);
+=======
+app.listen(process.env.PORT || 3000, () => {
+  console.log('🚀 OAuth Backend running on port', process.env.PORT || 3000);
+  console.log('✅ Using DirectoryEngine subdomain');
+  console.log('📋 Version: 11.0.0-directoryengine-subdomain');
+>>>>>>> 53a00a569bce7aa1d05822552a536eefddc3d4fa
 });
