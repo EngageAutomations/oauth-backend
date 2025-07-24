@@ -1,7 +1,7 @@
 {
   "name": "oauth-backend",
-  "version": "11.0.0-directoryengine-subdomain",
-  "description": "GoHighLevel OAuth Backend with DirectoryEngine Subdomain Support",
+  "version": "8.0.0-security",
+  "description": "GoHighLevel OAuth Backend with Security Infrastructure",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
