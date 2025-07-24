@@ -1,5 +1,5 @@
 # Railway Deployment Trigger
-Timestamp: 2025-07-01T19:51:47.906Z
-Version: 5.9.0-image-upload
-Features: Image upload with multer, auto-retry system, frontend redirect
-Status: Force deployment to ensure Railway picks up changes
+Timestamp: 2024-12-24T20:50:00.000Z
+Version: 8.0.0-security
+Features: Security infrastructure, token refresh, JWT decoding, monitoring endpoints
+Status: Force deployment to ensure Railway picks up security version
