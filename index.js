@@ -17,23 +17,23 @@ app.use(cors());
 app.use(express.json());
 
 // OAuth Credentials - read from environment variables
-const CLIENT_ID = process.env.GHL_CLIENT_ID || process.env.CLIENT_ID || '68474924a586bce22a6e64f7-mbpkmyu4';
-const CLIENT_SECRET = process.env.GHL_CLIENT_SECRET || process.env.CLIENT_SECRET || 'b5a7a120-7df7-4d23-8796-4863cbd08f94';
+const CLIENT_ID = '68474924-a8b8-4b8e-8b8e-8b8e8b8e8b8e';
+const CLIENT_SECRET = 'b5a7a120-1234-5678-9abc-def012345678';
 // Correct OAuth backend subdomain URL
-const REDIRECT_URI = process.env.GHL_REDIRECT_URI || 'https://dir.engageautomations.com/api/oauth/callback';
+const REDIRECT_URI = 'https://dir.engageautomations.com/api/oauth/callback';
 
 // Validate OAuth credentials on startup
 if (!process.env.GHL_CLIENT_ID && !process.env.CLIENT_ID) {
-  console.warn('⚠️ Using fallback CLIENT_ID - set GHL_CLIENT_ID or CLIENT_ID environment variable');
+  console.warn('âš ï¸ Using fallback CLIENT_ID - set GHL_CLIENT_ID or CLIENT_ID environment variable');
 }
 if (!process.env.GHL_CLIENT_SECRET && !process.env.CLIENT_SECRET) {
-  console.warn('⚠️ Using fallback CLIENT_SECRET - set GHL_CLIENT_SECRET or CLIENT_SECRET environment variable');
+  console.warn('âš ï¸ Using fallback CLIENT_SECRET - set GHL_CLIENT_SECRET or CLIENT_SECRET environment variable');
 }
 
-console.log('🔐 OAuth Configuration:');
-console.log('📋 CLIENT_ID:', CLIENT_ID ? CLIENT_ID.substring(0, 8) + '...' : 'missing');
-console.log('📋 CLIENT_SECRET:', CLIENT_SECRET ? '***' + CLIENT_SECRET.substring(CLIENT_SECRET.length - 4) : 'missing');
-console.log('📋 REDIRECT_URI:', REDIRECT_URI);
+console.log('ðŸ” OAuth Configuration:');
+console.log('ðŸ“‹ CLIENT_ID:', CLIENT_ID ? CLIENT_ID.substring(0, 8) + '...' : 'missing');
+console.log('ðŸ“‹ CLIENT_SECRET:', CLIENT_SECRET ? '***' + CLIENT_SECRET.substring(CLIENT_SECRET.length - 4) : 'missing');
+console.log('ðŸ“‹ REDIRECT_URI:', REDIRECT_URI);
 
 // In-memory storage
 const installations = new Map();
@@ -123,22 +123,22 @@ app.get('/installations', (req, res) => {
 app.get('/api/oauth/callback', async (req, res) => {
   const { code, state } = req.query;
   
-  console.log('🔄 OAuth callback received');
-  console.log('📄 Code:', code ? 'present' : 'missing');
-  console.log('📄 State:', state);
+  console.log('ðŸ”„ OAuth callback received');
+  console.log('ðŸ“„ Code:', code ? 'present' : 'missing');
+  console.log('ðŸ“„ State:', state);
   
   if (!code) {
-    console.log('❌ No authorization code received');
+    console.log('âŒ No authorization code received');
     return res.status(400).json({ error: 'No authorization code received' });
   }
 
   try {
-    console.log('🔄 Exchanging code for Location-level token...');
+    console.log('ðŸ”„ Exchanging code for Location-level token...');
     
     const tokenData = await exchangeCodeForLocationToken(code);
     
     if (!tokenData.access_token) {
-      console.log('❌ No access token in response:', tokenData);
+      console.log('âŒ No access token in response:', tokenData);
       return res.status(400).json({ error: 'Failed to get access token', details: tokenData });
     }
     
@@ -147,10 +147,10 @@ app.get('/api/oauth/callback', async (req, res) => {
     const authClass = tokenPayload?.authClass;
     const scopes = tokenData.scope || 'not available';
     
-    console.log('🔍 Token Analysis:');
-    console.log('📍 Location ID:', locationId);
-    console.log('🔐 Auth Class:', authClass);
-    console.log('📋 Granted Scopes:', scopes);
+    console.log('ðŸ” Token Analysis:');
+    console.log('ðŸ“ Location ID:', locationId);
+    console.log('ðŸ” Auth Class:', authClass);
+    console.log('ðŸ“‹ Granted Scopes:', scopes);
     
     const installationId = `install_${Date.now()}`;
     
@@ -176,16 +176,16 @@ app.get('/api/oauth/callback', async (req, res) => {
       scopes: scopes
     });
     
-    console.log('✅ Installation created:', installationId);
-    console.log('📍 Location ID:', locationId);
-    console.log('🔐 Auth Class:', authClass);
-    console.log('📋 Scopes:', scopes);
+    console.log('âœ… Installation created:', installationId);
+    console.log('ðŸ“ Location ID:', locationId);
+    console.log('ðŸ” Auth Class:', authClass);
+    console.log('ðŸ“‹ Scopes:', scopes);
     
     // Redirect to correct frontend domain
     res.redirect(`https://dir.engageautomations.com/welcome?installation_id=${installationId}`);
     
   } catch (error) {
-    console.error('❌ OAuth callback error:', error.message);
+    console.error('âŒ OAuth callback error:', error.message);
     res.status(500).json({ error: 'OAuth callback failed', details: error.message });
   }
 });
@@ -217,7 +217,7 @@ app.post('/api/media/upload', upload.single('file'), async (req, res) => {
 
     res.json(response.data);
   } catch (error) {
-    console.error('❌ Media upload error:', error.message);
+    console.error('âŒ Media upload error:', error.message);
     res.status(500).json({ error: 'Media upload failed', details: error.message });
   }
 });
@@ -248,7 +248,7 @@ app.post('/api/oauth/refresh', async (req, res) => {
       token_type: 'Bearer'
     });
   } catch (error) {
-    console.error('❌ Token refresh error:', error.message);
+    console.error('âŒ Token refresh error:', error.message);
     res.status(500).json({ error: 'Token refresh failed', details: error.message });
   }
 });
@@ -373,7 +373,7 @@ function decodeJWTPayload(token) {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 OAuth Backend v8.1.0-conflict-free running on port ${PORT}`);
-  console.log(`🔒 Security endpoints available at /api/security/status and /api/security/health`);
-  console.log(`✅ Clean deployment without merge conflicts`);
+  console.log(`ðŸš€ OAuth Backend v8.1.0-conflict-free running on port ${PORT}`);
+  console.log(`ðŸ”’ Security endpoints available at /api/security/status and /api/security/health`);
+  console.log(`âœ… Clean deployment without merge conflicts`);
 });
