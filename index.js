@@ -26,12 +26,12 @@ const TOKEN_REFRESH_BUFFER = 5 * 60 * 1000; // Refresh 5 minutes before expiry
 const AUTO_REFRESH_INTERVAL = 60 * 1000; // Check every minute
 const SMART_INSTALL_ENABLED = true; // Enable smart reinstallation
 
-console.log('ðŸš€ OAuth Backend with Smart Reinstallation:');
-console.log('ðŸ“‹ CLIENT_ID:', CLIENT_ID ? CLIENT_ID.substring(0, 8) + '...' : 'missing');
-console.log('ðŸ“‹ CLIENT_SECRET:', CLIENT_SECRET ? '***' + CLIENT_SECRET.substring(CLIENT_SECRET.length - 4) : 'missing');
-console.log('ðŸ“‹ REDIRECT_URI:', REDIRECT_URI);
-console.log('ðŸ”„ Auto-refresh buffer:', TOKEN_REFRESH_BUFFER / 1000 / 60, 'minutes');
-console.log('ðŸ§  Smart reinstallation:', SMART_INSTALL_ENABLED ? 'ENABLED' : 'DISABLED');
+console.log('🚀 OAuth Backend with Smart Reinstallation:');
+console.log('📋 CLIENT_ID:', CLIENT_ID ? CLIENT_ID.substring(0, 8) + '...' : 'missing');
+console.log('📋 CLIENT_SECRET:', CLIENT_SECRET ? '***' + CLIENT_SECRET.substring(CLIENT_SECRET.length - 4) : 'missing');
+console.log('📋 REDIRECT_URI:', REDIRECT_URI);
+console.log('🔄 Auto-refresh buffer:', TOKEN_REFRESH_BUFFER / 1000 / 60, 'minutes');
+console.log('🧠 Smart reinstallation:', SMART_INSTALL_ENABLED ? 'ENABLED' : 'DISABLED');
 
 // Enhanced storage with location-based indexing and persistence
 const fs = require('fs');
@@ -78,12 +78,12 @@ function loadPersistedData() {
         });
       }
       
-      console.log(`âœ… Restored ${installations.size} installations and ${tokens.size} tokens from persistent storage`);
+      console.log(`✅ Restored ${installations.size} installations and ${tokens.size} tokens from persistent storage`);
     } else {
-      console.log('ðŸ“ No existing storage file found, starting fresh');
+      console.log('📁 No existing storage file found, starting fresh');
     }
   } catch (error) {
-    console.error('âš ï¸ Failed to load persisted data:', error.message);
+    console.error('⚠️ Failed to load persisted data:', error.message);
   }
 }
 
@@ -99,9 +99,9 @@ function savePersistedData() {
     };
     
     fs.writeFileSync(STORAGE_FILE, JSON.stringify(data, null, 2));
-    console.log(`ðŸ’¾ Saved ${installations.size} installations and ${tokens.size} tokens to persistent storage`);
+    console.log(`💾 Saved ${installations.size} installations and ${tokens.size} tokens to persistent storage`);
   } catch (error) {
-    console.error('âš ï¸ Failed to save persisted data:', error.message);
+    console.error('⚠️ Failed to save persisted data:', error.message);
   }
 }
 
@@ -110,13 +110,13 @@ setInterval(savePersistedData, 30000);
 
 // Save on process exit
 process.on('SIGINT', () => {
-  console.log('ðŸ”„ Saving data before exit...');
+  console.log('🔄 Saving data before exit...');
   savePersistedData();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
-  console.log('ðŸ”„ Saving data before termination...');
+  console.log('🔄 Saving data before termination...');
   savePersistedData();
   process.exit(0);
 });
@@ -144,13 +144,13 @@ async function validateAndRefreshToken(installationId) {
   const expiresAt = tokenData.expires_at;
   const timeUntilExpiry = expiresAt - now;
   
-  console.log(`ðŸ” Token check for ${installationId}:`);
-  console.log(`â° Expires at: ${new Date(expiresAt).toISOString()}`);
-  console.log(`â±ï¸ Time until expiry: ${Math.round(timeUntilExpiry / 1000 / 60)} minutes`);
+  console.log(`🔍 Token check for ${installationId}:`);
+  console.log(`⏰ Expires at: ${new Date(expiresAt).toISOString()}`);
+  console.log(`⏱️ Time until expiry: ${Math.round(timeUntilExpiry / 1000 / 60)} minutes`);
   
   // If token expires within buffer time, refresh it
   if (timeUntilExpiry <= TOKEN_REFRESH_BUFFER) {
-    console.log(`ðŸ”„ Auto-refreshing token for ${installationId} (expires in ${Math.round(timeUntilExpiry / 1000 / 60)} minutes)`);
+    console.log(`🔄 Auto-refreshing token for ${installationId} (expires in ${Math.round(timeUntilExpiry / 1000 / 60)} minutes)`);
     
     try {
       const refreshedTokens = await refreshAccessToken(tokenData.refresh_token);
@@ -172,15 +172,15 @@ async function validateAndRefreshToken(installationId) {
       stats.last_refresh = new Date().toISOString();
       refreshStats.set(installationId, stats);
       
-      console.log(`âœ… Token auto-refreshed for ${installationId}`);
-      console.log(`ðŸ“Š Refresh count: ${stats.count}`);
+      console.log(`✅ Token auto-refreshed for ${installationId}`);
+      console.log(`📊 Refresh count: ${stats.count}`);
       
       // Save to persistent storage
       savePersistedData();
       
       return updatedTokenData;
     } catch (error) {
-      console.error(`âŒ Auto-refresh failed for ${installationId}:`, error.message);
+      console.error(`❌ Auto-refresh failed for ${installationId}:`, error.message);
       throw error;
     }
   }
@@ -207,11 +207,11 @@ function findExistingValidInstallation(locationId) {
       
       // If token is valid for more than 1 hour, reuse it
       if (timeUntilExpiry > 60 * 60 * 1000) {
-        console.log(`ðŸ§  Smart reuse: Found valid token for location ${locationId}`);
-        console.log(`â° Token valid for ${Math.round(timeUntilExpiry / 1000 / 60)} more minutes`);
+        console.log(`🧠 Smart reuse: Found valid token for location ${locationId}`);
+        console.log(`⏰ Token valid for ${Math.round(timeUntilExpiry / 1000 / 60)} more minutes`);
         return existingInstallationId;
       } else {
-        console.log(`ðŸ§  Smart reuse: Existing token expires soon, will refresh automatically`);
+        console.log(`🧠 Smart reuse: Existing token expires soon, will refresh automatically`);
         return existingInstallationId;
       }
     }
@@ -225,7 +225,7 @@ const PROACTIVE_RENEWAL_BUFFER = 24 * 60 * 60 * 1000; // 24 hours before expiry
 
 async function proactiveTokenRenewal(installationId, tokenData) {
   try {
-    console.log(`ðŸ”„ Proactive renewal for ${installationId}`);
+    console.log(`🔄 Proactive renewal for ${installationId}`);
     
     const refreshedTokens = await refreshAccessToken(tokenData.refresh_token);
     
@@ -249,22 +249,22 @@ async function proactiveTokenRenewal(installationId, tokenData) {
     stats.last_proactive_renewal = new Date().toISOString();
     refreshStats.set(installationId, stats);
     
-    console.log(`âœ… Proactive renewal complete for ${installationId}`);
-    console.log(`ðŸ“Š Total renewals: ${stats.count}, Proactive: ${stats.proactive_renewals}`);
+    console.log(`✅ Proactive renewal complete for ${installationId}`);
+    console.log(`📊 Total renewals: ${stats.count}, Proactive: ${stats.proactive_renewals}`);
     
     // Save to persistent storage
     savePersistedData();
     
     return updatedTokenData;
   } catch (error) {
-    console.error(`âŒ Proactive renewal failed for ${installationId}:`, error.message);
+    console.error(`❌ Proactive renewal failed for ${installationId}:`, error.message);
     throw error;
   }
 }
 
 // Background token refresh checker with proactive renewal
 setInterval(async () => {
-  console.log('ðŸ”„ Running smart renew background check...');
+  console.log('🔄 Running smart renew background check...');
   
   for (const [installationId, tokenData] of tokens.entries()) {
     try {
@@ -273,20 +273,20 @@ setInterval(async () => {
       
       // Proactive renewal: renew if token expires within 24 hours
       if (timeUntilExpiry <= PROACTIVE_RENEWAL_BUFFER && timeUntilExpiry > TOKEN_REFRESH_BUFFER) {
-        console.log(`ðŸš€ Proactive renewal triggered for ${installationId} (expires in ${Math.round(timeUntilExpiry / 1000 / 60 / 60)} hours)`);
+        console.log(`🚀 Proactive renewal triggered for ${installationId} (expires in ${Math.round(timeUntilExpiry / 1000 / 60 / 60)} hours)`);
         await proactiveTokenRenewal(installationId, tokenData);
       }
       // Emergency refresh: token expires very soon
       else if (timeUntilExpiry <= TOKEN_REFRESH_BUFFER) {
-        console.log(`âš¡ Emergency refresh for ${installationId} (expires in ${Math.round(timeUntilExpiry / 1000 / 60)} minutes)`);
+        console.log(`⚡ Emergency refresh for ${installationId} (expires in ${Math.round(timeUntilExpiry / 1000 / 60)} minutes)`);
         await validateAndRefreshToken(installationId);
       }
     } catch (error) {
-      console.error(`âŒ Smart renew failed for ${installationId}:`, error.message);
+      console.error(`❌ Smart renew failed for ${installationId}:`, error.message);
     }
   }
   
-  console.log(`âœ… Smart renew check complete. Active tokens: ${tokens.size}`);
+  console.log(`✅ Smart renew check complete. Active tokens: ${tokens.size}`);
 }, AUTO_REFRESH_INTERVAL);
 
 // Health check endpoint
@@ -379,9 +379,9 @@ app.get('/api/installations/smart-check', (req, res) => {
 app.get('/api/oauth/callback', async (req, res) => {
   const { code, state } = req.query;
   
-  console.log('ðŸ”„ OAuth callback received');
-  console.log('ðŸ“„ Code:', code ? 'present' : 'missing');
-  console.log('ðŸ“„ State:', state);
+  console.log('🔄 OAuth callback received');
+  console.log('📄 Code:', code ? 'present' : 'missing');
+  console.log('📄 State:', state);
   
   // Check if this is a retry attempt
   const isRetry = state && state.startsWith('retry_');
@@ -391,28 +391,28 @@ app.get('/api/oauth/callback', async (req, res) => {
     const stateParts = state.split('_');
     if (stateParts.length >= 3) {
       retryInstallationId = stateParts.slice(1, -1).join('_'); // Handle installation IDs with underscores
-      console.log(`ðŸ”„ OAuth retry detected for installation: ${retryInstallationId}`);
+      console.log(`🔄 OAuth retry detected for installation: ${retryInstallationId}`);
     }
   }
   
   if (!code) {
-    console.log('âŒ No authorization code received');
+    console.log('❌ No authorization code received');
     return res.status(400).json({ error: 'No authorization code received' });
   }
 
   try {
-    console.log('ðŸ”„ Exchanging code for Location-level token...');
+    console.log('🔄 Exchanging code for Location-level token...');
     
     const tokenData = await exchangeCodeForLocationToken(code);
     
     // Handle OAuth errors with seamless fallback - never show errors to users
     if (tokenData.error) {
-      console.log('âŒ OAuth error received:', tokenData.error);
-      console.log('ðŸ“‹ Error description:', tokenData.error_description || 'No description provided');
+      console.log('❌ OAuth error received:', tokenData.error);
+      console.log('📋 Error description:', tokenData.error_description || 'No description provided');
       
       // For invalid_grant errors, try to find existing installation and refresh token
       if (tokenData.error === 'invalid_grant') {
-        console.log('ðŸ”„ Invalid grant - attempting smart token renewal...');
+        console.log('🔄 Invalid grant - attempting smart token renewal...');
         
         // Try to find existing installation for any location
         const existingInstallations = Array.from(installations.values());
@@ -422,7 +422,7 @@ app.get('/api/oauth/callback', async (req, res) => {
             new Date(b.created_at) - new Date(a.created_at)
           )[0];
           
-          console.log(`ðŸ”„ Found existing installation ${latestInstallation.id}, attempting token refresh...`);
+          console.log(`🔄 Found existing installation ${latestInstallation.id}, attempting token refresh...`);
           
           // Try to refresh the existing token
           const existingToken = tokens.get(latestInstallation.id);
@@ -430,7 +430,7 @@ app.get('/api/oauth/callback', async (req, res) => {
             try {
               const refreshedToken = await refreshAccessToken(existingToken.refresh_token);
               if (refreshedToken && !refreshedToken.error) {
-                console.log('âœ… Successfully refreshed existing token');
+                console.log('✅ Successfully refreshed existing token');
                 
                 // Update the existing token
                 tokens.set(latestInstallation.id, {
@@ -451,13 +451,13 @@ app.get('/api/oauth/callback', async (req, res) => {
                 return res.redirect(`https://engageautomations.com/directoryengine?installation_id=${latestInstallation.id}&renewed=true`);
               }
             } catch (refreshError) {
-              console.log('âš ï¸ Token refresh failed:', refreshError.message);
+              console.log('⚠️ Token refresh failed:', refreshError.message);
             }
           }
         }
         
         // If no existing installation or refresh failed, create a new installation with placeholder data
-        console.log('ðŸ”„ Creating new installation despite OAuth error - seamless experience');
+        console.log('🔄 Creating new installation despite OAuth error - seamless experience');
         const fallbackInstallationId = `install_${Date.now()}_fallback`;
         
         const fallbackInstallation = {
@@ -498,7 +498,7 @@ app.get('/api/oauth/callback', async (req, res) => {
       }
       
       // For other OAuth errors, also create fallback installation
-      console.log('ðŸ”„ Creating fallback installation for OAuth error - seamless experience');
+      console.log('🔄 Creating fallback installation for OAuth error - seamless experience');
       const fallbackInstallationId = `install_${Date.now()}_error`;
       
       const fallbackInstallation = {
@@ -537,7 +537,7 @@ app.get('/api/oauth/callback', async (req, res) => {
     }
     
     if (!tokenData.access_token) {
-      console.log('âŒ No access token in response:', tokenData);
+      console.log('❌ No access token in response:', tokenData);
       return res.status(400).json({ error: 'Failed to get access token', details: tokenData });
     }
     
@@ -546,30 +546,30 @@ app.get('/api/oauth/callback', async (req, res) => {
     const authClass = tokenPayload?.authClass;
     const scopes = tokenData.scope || 'not available';
     
-    console.log('ðŸ” Token Analysis:');
-    console.log('ðŸ“ Location ID:', locationId);
-    console.log('ðŸ” Auth Class:', authClass);
-    console.log('ðŸ“‹ Granted Scopes:', scopes);
+    console.log('🔍 Token Analysis:');
+    console.log('📍 Location ID:', locationId);
+    console.log('🔐 Auth Class:', authClass);
+    console.log('📋 Granted Scopes:', scopes);
     
     // Fetch location details from GoHighLevel API
     let locationDetails = null;
     if (locationId && tokenData.access_token) {
       try {
-        console.log('ðŸ” Fetching location details from GoHighLevel API...');
+        console.log('🔍 Fetching location details from GoHighLevel API...');
         locationDetails = await fetchLocationDetails(tokenData.access_token);
-        console.log('âœ… Location details fetched:', locationDetails?.name || 'No name available');
+        console.log('✅ Location details fetched:', locationDetails?.name || 'No name available');
       } catch (error) {
-        console.log('âš ï¸ Failed to fetch location details:', error.message);
+        console.log('⚠️ Failed to fetch location details:', error.message);
       }
     }
     
     // Handle retry scenarios first
     if (isRetry && retryInstallationId) {
-      console.log(`ðŸ”„ Processing OAuth retry for installation: ${retryInstallationId}`);
+      console.log(`🔄 Processing OAuth retry for installation: ${retryInstallationId}`);
       
       const retryInstallation = installations.get(retryInstallationId);
       if (retryInstallation) {
-        console.log(`âœ… Updating existing installation ${retryInstallationId} with fresh OAuth token`);
+        console.log(`✅ Updating existing installation ${retryInstallationId} with fresh OAuth token`);
         
         // Update installation with real data
         retryInstallation.location_id = locationId || 'unknown';
@@ -622,9 +622,9 @@ app.get('/api/oauth/callback', async (req, res) => {
           retry_successful: true
         });
         
-        console.log(`âœ… OAuth retry successful for ${retryInstallationId}`);
-        console.log(`ðŸ“ Updated location ID: ${locationId}`);
-        console.log(`ðŸ” Auth class: ${authClass}`);
+        console.log(`✅ OAuth retry successful for ${retryInstallationId}`);
+        console.log(`📍 Updated location ID: ${locationId}`);
+        console.log(`🔐 Auth class: ${authClass}`);
         
         savePersistedData();
         
@@ -638,8 +638,8 @@ app.get('/api/oauth/callback', async (req, res) => {
       const existingInstallationId = findExistingValidInstallation(locationId);
       
       if (existingInstallationId) {
-        console.log(`ðŸ”„ Smart renew: Detected existing installation ${existingInstallationId}`);
-        console.log(`ðŸ†• Generating fresh token and overriding existing one`);
+        console.log(`🔄 Smart renew: Detected existing installation ${existingInstallationId}`);
+        console.log(`🆕 Generating fresh token and overriding existing one`);
         
         // Update existing installation metadata
         const existingInstallation = installations.get(existingInstallationId);
@@ -669,9 +669,9 @@ app.get('/api/oauth/callback', async (req, res) => {
           renewed_count: (refreshStats.get(existingInstallationId)?.renewed_count || 0) + 1
         });
         
-        console.log(`âœ… Smart renew complete for ${existingInstallationId}`);
-        console.log(`ðŸ“Š Reinstall count: ${existingInstallation.reinstall_count}`);
-        console.log(`ðŸ”„ Token completely renewed with fresh OAuth`);
+        console.log(`✅ Smart renew complete for ${existingInstallationId}`);
+        console.log(`📊 Reinstall count: ${existingInstallation.reinstall_count}`);
+        console.log(`🔄 Token completely renewed with fresh OAuth`);
         
         // Save to persistent storage
         savePersistedData();
@@ -737,11 +737,11 @@ app.get('/api/oauth/callback', async (req, res) => {
       created_at: new Date().toISOString()
     });
     
-    console.log('âœ… New installation created with smart features:', installationId);
-    console.log('ðŸ“ Location ID:', locationId);
-    console.log('ðŸ” Auth Class:', authClass);
-    console.log('ðŸ“‹ Scopes:', scopes);
-    console.log('ðŸ§  Smart reuse enabled for future reinstalls');
+    console.log('✅ New installation created with smart features:', installationId);
+    console.log('📍 Location ID:', locationId);
+    console.log('🔐 Auth Class:', authClass);
+    console.log('📋 Scopes:', scopes);
+    console.log('🧠 Smart reuse enabled for future reinstalls');
     
     // Save to persistent storage
     savePersistedData();
@@ -750,7 +750,7 @@ app.get('/api/oauth/callback', async (req, res) => {
     res.redirect(`https://engageautomations.com/directoryengine?installation_id=${installationId}&smart_reuse=false`);
     
   } catch (error) {
-    console.error('âŒ OAuth callback error:', error.message);
+    console.error('❌ OAuth callback error:', error.message);
     res.status(500).json({ error: 'OAuth callback failed', details: error.message });
   }
 });
@@ -858,7 +858,7 @@ app.post('/api/media/upload', upload.single('file'), async (req, res) => {
     const form = new FormData();
     form.append('file', req.file.buffer, req.file.originalname);
 
-    console.log(`ðŸ“¤ Uploading media for ${installation_id} with fresh token`);
+    console.log(`📤 Uploading media for ${installation_id} with fresh token`);
 
     const response = await axios.post('https://services.leadconnectorhq.com/media/upload', form, {
       headers: {
@@ -868,14 +868,14 @@ app.post('/api/media/upload', upload.single('file'), async (req, res) => {
       }
     });
 
-    console.log(`âœ… Media upload successful for ${installation_id}`);
+    console.log(`✅ Media upload successful for ${installation_id}`);
     res.json({
       ...response.data,
       token_auto_refreshed: tokenData.last_refreshed !== null,
       smart_features_enabled: true
     });
   } catch (error) {
-    console.error('âŒ Media upload error:', error.message);
+    console.error('❌ Media upload error:', error.message);
     res.status(500).json({ error: 'Media upload failed', details: error.message });
   }
 });
@@ -895,7 +895,7 @@ app.post('/api/oauth/refresh', async (req, res) => {
       return res.status(401).json({ error: 'Invalid installation or missing refresh token' });
     }
 
-    console.log(`ðŸ”„ Manual token refresh requested for ${installation_id}`);
+    console.log(`🔄 Manual token refresh requested for ${installation_id}`);
 
     const refreshedTokens = await refreshAccessToken(tokenData.refresh_token);
     
@@ -916,7 +916,7 @@ app.post('/api/oauth/refresh', async (req, res) => {
     stats.last_refresh = new Date().toISOString();
     refreshStats.set(installation_id, stats);
 
-    console.log(`âœ… Manual token refresh successful for ${installation_id}`);
+    console.log(`✅ Manual token refresh successful for ${installation_id}`);
 
     res.json({
       access_token: refreshedTokens.access_token,
@@ -927,7 +927,7 @@ app.post('/api/oauth/refresh', async (req, res) => {
       smart_features_enabled: true
     });
   } catch (error) {
-    console.error('âŒ Token refresh error:', error.message);
+    console.error('❌ Token refresh error:', error.message);
     res.status(500).json({ error: 'Token refresh failed', details: error.message });
   }
 });
@@ -945,7 +945,7 @@ app.post('/api/oauth/retry', (req, res) => {
     return res.status(404).json({ error: 'Installation not found' });
   }
   
-  console.log(`ðŸ”„ Fresh OAuth retry requested for ${installation_id}`);
+  console.log(`🔄 Fresh OAuth retry requested for ${installation_id}`);
   
   // Generate fresh OAuth URL for this installation
   const state = `retry_${installation_id}_${Date.now()}`;
@@ -958,7 +958,7 @@ app.post('/api/oauth/retry', (req, res) => {
   
   savePersistedData();
   
-  console.log(`âœ… Fresh OAuth URL generated for retry: ${installation_id}`);
+  console.log(`✅ Fresh OAuth URL generated for retry: ${installation_id}`);
   
   res.json({
     oauth_url: oauthUrl,
@@ -983,7 +983,7 @@ async function fetchLocationDetails(accessToken) {
       }
     };
 
-    console.log('ðŸ” Fetching user locations from GoHighLevel API...');
+    console.log('🔍 Fetching user locations from GoHighLevel API...');
 
     const userReq = https.request(userOptions, (userRes) => {
       let userData = '';
@@ -995,14 +995,14 @@ async function fetchLocationDetails(accessToken) {
       userRes.on('end', () => {
         try {
           const userResponse = JSON.parse(userData);
-          console.log('ðŸ“‹ User API response status:', userRes.statusCode);
+          console.log('📋 User API response status:', userRes.statusCode);
           
           if (userRes.statusCode === 200 && userResponse.user && userResponse.user.locations) {
             const locations = userResponse.user.locations;
-            console.log(`âœ… Found ${locations.length} location(s) for user`);
+            console.log(`✅ Found ${locations.length} location(s) for user`);
             
             if (locations.length === 0) {
-              console.log('âš ï¸ No locations found for user');
+              console.log('⚠️ No locations found for user');
               resolve(null);
               return;
             }
@@ -1011,7 +1011,7 @@ async function fetchLocationDetails(accessToken) {
             const primaryLocation = locations[0];
             const locationId = primaryLocation.id;
             
-            console.log(`ðŸŽ¯ Using primary location: ${primaryLocation.name} (ID: ${locationId})`);
+            console.log(`🎯 Using primary location: ${primaryLocation.name} (ID: ${locationId})`);
 
             // Now fetch detailed location data
             const locationOptions = {
@@ -1035,11 +1035,11 @@ async function fetchLocationDetails(accessToken) {
               locationRes.on('end', () => {
                 try {
                   const locationResponse = JSON.parse(locationData);
-                  console.log('ðŸ“ Location API response status:', locationRes.statusCode);
+                  console.log('📍 Location API response status:', locationRes.statusCode);
                   
                   if (locationRes.statusCode === 200) {
                     const location = locationResponse;
-                    console.log('âœ… Location details fetched successfully:', location.name || 'Unknown');
+                    console.log('✅ Location details fetched successfully:', location.name || 'Unknown');
                     
                     resolve({
                       id: location.id,
@@ -1058,36 +1058,36 @@ async function fetchLocationDetails(accessToken) {
                       fullAddress: `${location.address || ''}, ${location.city || ''}, ${location.state || ''} ${location.postalCode || ''}`.replace(/^,\s*|,\s*$/g, '').replace(/,\s*,/g, ',')
                     });
                   } else {
-                    console.log('âŒ Location details API error:', locationData);
+                    console.log('❌ Location details API error:', locationData);
                     reject(new Error(`Failed to fetch location details: ${locationRes.statusCode}`));
                   }
                 } catch (error) {
-                  console.log('âŒ Location details parse error:', error.message);
+                  console.log('❌ Location details parse error:', error.message);
                   reject(new Error('Failed to parse location details response'));
                 }
               });
             });
 
             locationReq.on('error', (error) => {
-              console.log('âŒ Location details request error:', error.message);
+              console.log('❌ Location details request error:', error.message);
               reject(error);
             });
 
             locationReq.end();
 
           } else {
-            console.log('âŒ User API error or no locations:', userData);
+            console.log('❌ User API error or no locations:', userData);
             reject(new Error(`Failed to fetch user locations: ${userRes.statusCode}`));
           }
         } catch (error) {
-          console.log('âŒ User API parse error:', error.message);
+          console.log('❌ User API parse error:', error.message);
           reject(new Error('Failed to parse user response'));
         }
       });
     });
 
     userReq.on('error', (error) => {
-      console.log('âŒ User API request error:', error.message);
+      console.log('❌ User API request error:', error.message);
       reject(error);
     });
 
@@ -1254,8 +1254,8 @@ app.get('/api/security/health', (req, res) => {
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`ðŸš€ OAuth Backend with Smart Reinstallation running on port ${PORT}`);
-  console.log(`ðŸ”— Callback URL: ${REDIRECT_URI}`);
-  console.log(`ðŸ§  Smart features: Auto-refresh + Token reuse enabled`);
-  console.log(`ðŸ“Š Ready to handle seamless app reinstallations`);
+  console.log(`🚀 OAuth Backend with Smart Reinstallation running on port ${PORT}`);
+  console.log(`🔗 Callback URL: ${REDIRECT_URI}`);
+  console.log(`🧠 Smart features: Auto-refresh + Token reuse enabled`);
+  console.log(`📊 Ready to handle seamless app reinstallations`);
 });
