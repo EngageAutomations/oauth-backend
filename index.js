@@ -1,8 +1,8 @@
 /**
- * GoHighLevel OAuth Backend with Smart Reinstallation
- * Version: 10.0.0-smart-install
- * Enhanced with automatic token reuse and seamless reinstallation
- * Deploy: 2025-01-27T23:00:00.000Z
+ * GoHighLevel OAuth Backend with Location Data Enhancement
+ * Version: 12.0.0-location-data
+ * Enhanced with location data capture and company information
+ * Deploy: 2025-08-07T15:51:00.000Z
  */
 
 const express = require('express');
