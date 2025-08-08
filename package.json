@@ -1,22 +1,51 @@
 {
-    "name":  "oauth-backend",
-    "version":  "12.1.0-conservative-token-management",
-    "description":  "GoHighLevel OAuth Backend with Security Infrastructure",
-    "main":  "index.js",
-    "scripts":  {
-                    "start":  "node index.js"
-                },
-    "dependencies":  {
-                         "axios":  "^1.4.0",
-                         "clsx":  "^2.1.1",
-                         "cors":  "^2.8.5",
-                         "express":  "^4.18.2",
-                         "form-data":  "^4.0.0",
-                         "multer":  "^1.4.5-lts.1",
-                         "tailwind-merge":  "^3.3.1"
-                     },
-    "engines":  {
-                    "node":  "\u003e=18.0.0"
-                },
-    "lastDeployment":  "2025-08-07T17:28:21Z"
+  "name": "oauth-backend",
+  "version": "12.1.0-conservative-token-management",
+  "description": "OAuth Backend with Conservative Token Management - Eliminates Fallback Installations",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "oauth",
+    "gohighlevel",
+    "token-management",
+    "conservative-validation",
+    "security"
+  ],
+  "author": "EngageAutomations",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/engageautomations/oauth-backend.git"
+  },
+  "deployment": {
+    "timestamp": "2025-01-08T12:00:00Z",
+    "version": "12.1.0-conservative-token-management",
+    "features": [
+      "conservative-token-validation",
+      "strict-error-handling",
+      "enhanced-security",
+      "fallback-elimination",
+      "comprehensive-logging"
+    ],
+    "environment": "production",
+    "railway": {
+      "auto_deploy": true,
+      "build_command": "npm install",
+      "start_command": "npm start"
+    }
+  }
 }
